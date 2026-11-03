@@ -168,18 +168,78 @@ def test_rerun_without_error_never_dims_the_canvas(sampled: App) -> None:
     assert all(f["opacity"] == 1 and f["filter"] == "none" for f in ready_frames(sampled))
 
 
-def test_rerun_resets_background_without_a_fade(sampled: App) -> None:
+WHITE = "rgb(255, 255, 255)"
+
+
+def test_rerun_keeps_the_old_background_until_the_program_draws(sampled: App) -> None:
+    sampled.host.snapshot.update(DARK_SNAPSHOT)
+    sampled.open()
+    settle(sampled, 100)
+    before = len(frames(sampled))
+    sampled.send(run(2), status("starting", 2), status("running", 2))
+    sampled.sync()
+    settle(sampled)
+    assert {f["fill"] for f in frames(sampled)[before:]} == {NAVY}
+
+
+def test_rerun_without_a_canvas_call_goes_white_at_the_first_frame_without_a_fade(
+    sampled: App,
+) -> None:
+    sampled.host.snapshot.update(DARK_SNAPSHOT)
+    sampled.open()
+    settle(sampled, 100)
+    sampled.send(run(2), status("starting", 2))
+    sampled.sync()
+    settle(sampled, 100)
+    before = len(frames(sampled))
+    sampled.send({"t": "frame", "ops": [create(1, "circle", radius=40)]})
+    sampled.sync()
+    settle(sampled)
+    after = [f["fill"] for f in frames(sampled)[before:]]
+    assert after[-1] == WHITE
+    # no in-between greys: every frame is either the old colour or the new one
+    assert set(after) <= {NAVY, WHITE}
+
+
+def test_rerun_of_a_dark_program_is_never_white_in_between(sampled: App) -> None:
     sampled.host.snapshot.update(DARK_SNAPSHOT)
     sampled.open()
     settle(sampled, 100)
     before = len(frames(sampled))
     sampled.send(run(2), status("starting", 2))
     sampled.sync()
+    settle(sampled, 120)
+    sampled.send(status("running", 2))
+    sampled.sync()
+    settle(sampled, 120)
+    sampled.send(
+        {"t": "canvas", "background": "#0b1026"},
+        {"t": "frame", "ops": [create(1, "circle", radius=40)]},
+    )
+    sampled.sync()
+    settle(sampled)
+    after = frames(sampled)[before:]
+    assert len(after) > 10
+    assert {f["fill"] for f in after} == {NAVY}
+
+
+def test_rerun_with_a_new_dark_background_goes_straight_to_it(sampled: App) -> None:
+    sampled.host.snapshot.update(DARK_SNAPSHOT)
+    sampled.open()
+    settle(sampled, 100)
+    before = len(frames(sampled))
+    sampled.send(run(2), status("running", 2))
+    sampled.sync()
+    settle(sampled, 120)
+    sampled.send({"t": "canvas", "background": "#102030"})
+    sampled.sync()
+    settle(sampled, 120)
+    sampled.send({"t": "frame", "ops": [create(1, "circle", radius=40)]})
+    sampled.sync()
     settle(sampled)
     after = [f["fill"] for f in frames(sampled)[before:]]
-    assert after[-1] == "rgb(255, 255, 255)"
-    # no in-between greys: every frame is either the old colour or the new one
-    assert set(after) <= {NAVY, "rgb(255, 255, 255)"}
+    assert set(after) == {NAVY, "rgb(16, 32, 48)"}
+    assert WHITE not in after
 
 
 def test_live_error_still_dims_smoothly(sampled: App) -> None:
@@ -214,11 +274,16 @@ def test_no_transitions_on_snapshot_after_reconnect(listening: App) -> None:
     assert transitions(listening) == []
 
 
-def test_run_resets_background_without_a_transition(listening: App) -> None:
+def test_background_changes_between_runs_without_a_transition(listening: App) -> None:
     listening.host.snapshot.update(DARK_SNAPSHOT)
     listening.open()
     settle(listening, 100)
     listening.send(run(2))
+    listening.sync()
+    settle(listening, 100)
+    listening.send({"t": "frame", "ops": [create(1, "circle", radius=40)]})
+    listening.sync()
+    listening.send(run(3), {"t": "canvas", "background": "#102030"})
     listening.sync()
     settle(listening)
     assert not [t for t in transitions(listening) if t.startswith("background")]

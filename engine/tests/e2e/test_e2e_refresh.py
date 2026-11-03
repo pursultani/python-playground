@@ -177,3 +177,48 @@ def test_editing_a_second_file_restarts(pg: Playground):
     pg.wait_for_console("1")
     (pg.directory / "helper.py").write_text("VALUE = 22\n")
     pg.wait_for_console("22")
+
+
+SAMPLE_BACKGROUND = """
+() => {
+  window.__fills = [];
+  const bg = document.getElementById('background');
+  const sample = () => {
+    window.__fills.push(getComputedStyle(bg).fill);
+    window.__sampler = requestAnimationFrame(sample);
+  };
+  sample();
+}
+"""
+
+DARK = "rgb(11, 16, 38)"
+DARK_SCRIPT = (
+    "canvas(background='#0b1026')\nCircle(color='gold')\nprint('{}')\nwhile True:\n    wait(0.05)\n"
+)
+
+
+def test_editing_a_dark_program_never_flashes_white(pg: Playground):
+    pg.start(DARK_SCRIPT.format("v1"))
+    pg.wait_for_console("v1")
+    pg.settle()
+    pg.page.evaluate(SAMPLE_BACKGROUND)
+    for i in range(2, 5):
+        pg.edit(DARK_SCRIPT.format(f"v{i}"), "running")
+        pg.wait_for_console(f"v{i}")
+        pg.settle(150)
+    fills = pg.page.evaluate("cancelAnimationFrame(window.__sampler) || window.__fills")
+    assert len(fills) > 30
+    assert set(fills) == {DARK}, f"background changed during re-runs: {sorted(set(fills))}"
+
+
+def test_dropping_the_canvas_call_goes_back_to_white_without_a_fade(pg: Playground):
+    pg.start(DARK_SCRIPT.format("v1"))
+    pg.wait_for_console("v1")
+    pg.settle()
+    pg.page.evaluate(SAMPLE_BACKGROUND)
+    pg.edit("Circle()\nprint('v2')\nwhile True:\n    wait(0.05)\n", "running")
+    pg.wait_for_console("v2")
+    pg.settle(150)
+    fills = pg.page.evaluate("cancelAnimationFrame(window.__sampler) || window.__fills")
+    assert set(fills) == {DARK, "rgb(255, 255, 255)"}, sorted(set(fills))
+    assert fills[-1] == "rgb(255, 255, 255)"

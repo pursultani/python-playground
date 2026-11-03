@@ -42,10 +42,89 @@ def test_run_keeps_nodes_until_first_frame(app: App) -> None:
     app.expect_state("starting")
     expect(app.page.locator("#error-panel")).to_be_hidden()
     assert app.console_text() == ""
-    expect(app.page.locator("#background")).to_have_attribute("fill", "white")
+    expect(app.page.locator("#background")).to_have_attribute("fill", "red")
     app.send(status("running", 2))
     app.sync()
     assert app.ids() == [1, 2]
+    expect(app.page.locator("#background")).to_have_attribute("fill", "red")
+
+
+def background(app: App) -> str:
+    return app.page.locator("#background").get_attribute("fill") or ""
+
+
+def dark_page(app: App) -> None:
+    app.send({"t": "canvas", "background": "#0b1026"}, frame(create(1, "circle")))
+    expect(app.shapes()).to_have_count(1)
+    assert background(app) == "#0b1026"
+
+
+def test_run_keeps_the_background_until_the_first_frame_then_resets_to_white(app: App) -> None:
+    dark_page(app)
+    app.send(run(2), status("starting", 2), status("running", 2), print_("hi\n"))
+    app.sync()
+    assert background(app) == "#0b1026"
+    app.send(frame(create(1, "circle")))
+    app.sync()
+    assert background(app) == "white"
+
+
+def test_canvas_message_first_applies_its_background_and_frame_does_not_undo_it(app: App) -> None:
+    dark_page(app)
+    app.send(run(2), {"t": "canvas", "background": "#102030"})
+    app.sync()
+    assert background(app) == "#102030"
+    assert app.ids() == [1]
+    app.send(frame(create(1, "circle")), frame(update(1, x=5)))
+    app.sync()
+    assert background(app) == "#102030"
+
+
+def test_canvas_and_frame_in_one_flush_keep_the_new_background(app: App) -> None:
+    dark_page(app)
+    app.send(run(2), {"t": "canvas", "background": "#102030"}, frame(create(1, "circle")))
+    app.sync()
+    assert background(app) == "#102030"
+
+
+def test_run_that_finishes_immediately_resets_the_background(app: App) -> None:
+    dark_page(app)
+    app.send(run(2), status("starting", 2))
+    app.sync()
+    assert background(app) == "#0b1026"
+    app.send(status("finished", 2))
+    app.sync()
+    assert background(app) == "white"
+
+
+def test_end_and_error_also_reset_the_background(app: App) -> None:
+    dark_page(app)
+    app.send(run(2), {"t": "end"})
+    app.sync()
+    assert background(app) == "white"
+    app.send({"t": "canvas", "background": "#0b1026"}, run(3), error("Oops", "x"))
+    app.sync()
+    assert background(app) == "white"
+
+
+def test_later_canvas_calls_in_the_same_run_are_not_reset(app: App) -> None:
+    dark_page(app)
+    app.send(run(2), frame(create(1, "circle")))
+    app.send({"t": "canvas", "background": "#102030"}, frame(update(1, x=5)))
+    app.sync()
+    assert background(app) == "#102030"
+
+
+def test_snapshot_cancels_a_pending_background_reset(app: App) -> None:
+    dark_page(app)
+    app.send(run(2))
+    app.sync()
+    app.host.snapshot.update(background="#102030", run=3)
+    app.host.drop_clients()
+    app.page.wait_for_function("document.body.dataset.run === '3'")
+    app.send(frame(create(1, "circle")))
+    app.sync()
+    assert background(app) == "#102030"
 
 
 def test_rerun_reuses_nodes_and_sweeps_stale_ones_on_first_frame(app: App) -> None:

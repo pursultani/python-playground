@@ -96,8 +96,7 @@ origin is 0,0 of the group). Children geometry is centred on 0,0:
 
 ## Run boundaries and re-run smoothness
 
-- On `run`: set `staleIds = new Set(all current ids)`, background -> white (no transition), clear console
-  and error, state `starting`. **Do not remove nodes yet.**
+- On `run`: set `staleIds = new Set(all current ids)`, clear console and error, state `starting`. **Do not remove nodes yet, and keep the old background**: the new run's `canvas` background (no transition) replaces it, or white (no transition) when the stale nodes are swept first, so a dark program does not flash white.
 - `create` for an id that exists: reuse the node when `type` matches (apply props with
   transitions, so shapes glide from old state to new), otherwise replace the element.
   Mark the id as fresh (delete from `staleIds`).
@@ -125,7 +124,8 @@ origin is 0,0 of the group). Children geometry is centred on 0,0:
 
 ## Testability hooks
 
-- `document.body.dataset.state` = current lifecycle state; `document.body.dataset.run` = run number.
+- `document.body.dataset.state` = current lifecycle state; `document.body.dataset.run` = run number;
+  `document.body.dataset.ready` is set after the first message (the canvas is hidden until then).
 - Every shape group has `data-id` and `data-type`; `#console` holds the text; the error panel
   has `id="error-panel"` (absent or `hidden` when no error); status badge `id="status"`.
 - `window.__playground` exposes `{state, nodes}` read-only for debugging (not relied on by users).

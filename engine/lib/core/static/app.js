@@ -21,6 +21,7 @@
     state: "starting",
     nodes: new Map(),
     staleIds: null,
+    backgroundStale: false,
     connected: false,
   };
 
@@ -367,6 +368,10 @@
   }
 
   function sweepStale() {
+    if (app.backgroundStale) {
+      app.backgroundStale = false;
+      setBackground("white", false);
+    }
     if (!app.staleIds) return;
     for (const id of [...app.staleIds]) removeNode(id);
     app.staleIds = null;
@@ -570,6 +575,7 @@
   function onSnapshot(s) {
     clearNodes();
     app.staleIds = null;
+    app.backgroundStale = false;
     setRun(s.run || 0);
     setState(s.state || "starting", true);
     setScript(s.script);
@@ -587,7 +593,7 @@
   function onRun(msg) {
     setRun(msg.run);
     app.staleIds = new Set(app.nodes.keys());
-    setBackground("white", false);
+    app.backgroundStale = true;
     clearConsole();
     hideError();
     setState("starting");
@@ -609,7 +615,9 @@
       sweepStale();
     },
     canvas(msg) {
-      setBackground(msg.background || "white", true);
+      const first = app.backgroundStale;
+      app.backgroundStale = false;
+      setBackground(msg.background || "white", !first);
     },
     print(msg) {
       addConsole(msg.text, msg.stream);
