@@ -16,8 +16,12 @@ TOOLS = ("cat", "cp", "ls", "mkdir", "readlink", "uname")
 
 FAKE_MAIN = """\
 import os, sys
+import random
 print("ARGS", sys.argv[1:])
 print("PYTHONPATH", os.environ["PYTHONPATH"])
+print("PROG", os.environ.get("PLAYGROUND_PROG"))
+print("RANDOM", random.__file__)
+print("PATH0", sys.path[:1])
 """
 
 OLD_PYTHON = """\
@@ -261,3 +265,31 @@ def test_install_with_old_python(tmp_path: Path) -> None:
     result = _sh(root / "install.sh", path=bin_dir)
     assert result.returncode == 1
     assert "found python3 3.8" in result.stdout
+
+
+def test_run_tells_the_engine_how_it_was_started(tmp_path: Path) -> None:
+    root = _make_root(tmp_path)
+    result = _sh(root / "run.sh", "main.py", path=_real_python_bin(tmp_path), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert f"PROG {root / 'run.sh'}" in result.stdout
+
+
+def test_a_file_named_like_a_python_module_cannot_get_in_the_way(tmp_path: Path) -> None:
+    root = _make_root(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "random.py").write_text("raise SystemExit('the student random.py was imported')\n")
+    result = _sh(root / "run.sh", "main.py", path=_real_python_bin(tmp_path), cwd=work)
+    assert result.returncode == 0, result.stderr
+    assert "student random.py" not in result.stderr
+    line = next(x for x in result.stdout.splitlines() if x.startswith("RANDOM"))
+    assert str(work) not in line
+    assert f"PATH0 ['{work}']" not in result.stdout and "PATH0 ['']" not in result.stdout
+
+
+def test_new_quotes_the_folder_in_the_next_step(tmp_path: Path) -> None:
+    root = _make_root(tmp_path)
+    result = _sh(root / "run.sh", "new", "my proj", path=_tool_bin(tmp_path), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert '"my proj/main.py"' in result.stdout
+    assert (tmp_path / "my proj/main.py").is_file()

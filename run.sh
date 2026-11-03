@@ -151,7 +151,10 @@ EOF
     say "Created a new project in '$folder'."
     say ""
     say "Next step: run it with"
-    say "  $invoked $folder/main.py"
+    case $folder in
+        *[!A-Za-z0-9._/+-]*) say "  $invoked \"$folder/main.py\"" ;;
+        *) say "  $invoked $folder/main.py" ;;
+    esac
 }
 
 case ${1-} in
@@ -174,4 +177,12 @@ fi
 
 PYTHONPATH=$ROOT/engine/lib${PYTHONPATH:+:$PYTHONPATH}
 export PYTHONPATH
-exec "$PYTHON" -m core "$@"
+PLAYGROUND_PROG=$invoked
+export PLAYGROUND_PROG
+
+# Python puts the current folder first on its search path. Take it off before importing anything,
+# so a student's file called random.py, queue.py or core.py cannot get in the way.
+BOOT='import os,sys,runpy;c=os.getcwd()
+sys.path[:]=[p for p in sys.path if p and os.path.abspath(p)!=c]
+runpy.run_module("core",run_name="__main__",alter_sys=True)'
+exec "$PYTHON" -c "$BOOT" "$@"

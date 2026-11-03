@@ -39,7 +39,7 @@ install-browsers: _need-uv ## Install Chromium for the browser tests
 
 run: ## Run a program: make run SCRIPT=examples/x/main.py
 	@test -f "$(SCRIPT)" || { echo "Cannot find '$(SCRIPT)'. Try: make run SCRIPT=examples/<name>/main.py"; exit 1; }
-	./run.sh $(SCRIPT)
+	./run.sh "$(SCRIPT)"
 
 test: _need-uv ## Run the fast tests (everything except e2e)
 	$(RUN) pytest -m "not e2e"
@@ -78,7 +78,7 @@ docs-serve: _need-uv ## Preview the documentation site while editing
 check: lint test stubs-check docs ## Everything CI checks: lint, test, stubs-check, docs
 
 clean: ## Remove build output, caches and __pycache__ folders
-	rm -rf site public .pytest_cache .ruff_cache
+	rm -rf site public .pytest_cache .ruff_cache test-results .uv-cache
 	find . -name .venv -prune -o -name .git -prune -o -type d -name __pycache__ -exec rm -rf {} +
 
 # CI helpers (used by .gitlab-ci.yml; also handy to reproduce a CI job locally).
