@@ -5,7 +5,7 @@ from typing import Any
 
 import core
 import pytest
-from core import Axis, Circle, Grid, Line, Rectangle, Shape, Text, Triangle, get
+from core import Axis, Circle, Grid, Line, Rectangle, Shape, Text, Triangle, _runtime, get
 from core._runtime import Runtime
 
 from .conftest import Recorder
@@ -369,3 +369,97 @@ def test_every_public_member_has_a_docstring() -> None:
                 assert inspect.getdoc(member), f"{cls.__name__}.{name}"
     for name in core.__all__:
         assert "Example:" in (inspect.getdoc(getattr(core, name)) or ""), name
+
+
+def test_object_cap_counts_live_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_runtime, "MAX_OBJECTS", 3)
+    shapes = [Circle(), Rectangle(), Grid()]
+    with pytest.raises(
+        RuntimeError, match=r"^Too many shapes \(3\)\. Did you forget to remove\(\) old ones\?$"
+    ):
+        Circle(name="late")
+    with pytest.raises(LookupError):
+        get("late")
+    shapes[0].remove()
+    shapes[0].remove()
+    Circle(name="late")
+    assert get("late")
+    with pytest.raises(RuntimeError, match="Too many shapes"):
+        Text()
+
+
+def test_object_cap_default_is_5000() -> None:
+    assert _runtime.MAX_OBJECTS == 5000
+    for _ in range(5000):
+        Circle()
+    with pytest.raises(RuntimeError, match=r"Too many shapes \(5000\)"):
+        Circle()
+
+
+@pytest.mark.parametrize("cls", [Grid, Axis])
+def test_guides_positional_arguments_message(cls: type) -> None:
+    with pytest.raises(
+        TypeError,
+        match=rf"^{cls.__name__}\(\) needs names for its values, like {cls.__name__}\(size=50\)\.$",
+    ):
+        cls(50)
+
+
+@pytest.mark.parametrize("name", ["colors", "names", "titles", "rotations", "xs", "radiuses"])
+def test_subclass_may_use_plural_of_a_property_name(name: str) -> None:
+    class Swarm(Circle):
+        def __init__(self) -> None:
+            super().__init__()
+            setattr(self, name, [])
+
+    swarm = Swarm()
+    assert getattr(swarm, name) == []
+    with pytest.raises(AttributeError) as info:
+        getattr(Swarm(), "heights" if name == "xs" else "widths")
+    assert "Did you mean" not in str(info.value)
+
+
+def test_subclass_plural_names_still_work_when_read_first() -> None:
+    class Swarm(Circle):
+        pass
+
+    with pytest.raises(AttributeError, match="'Swarm' object has no attribute 'colors'"):
+        Swarm().colors  # type: ignore[attr-defined]  # noqa: B018
+    with pytest.raises(AttributeError, match="Did you mean 'color'"):
+        Swarm().colour = "red"  # type: ignore[attr-defined]
+
+
+def test_builtin_class_still_rejects_plurals() -> None:
+    with pytest.raises(AttributeError, match="Circle has no property 'colors'"):
+        Circle().colors = []  # type: ignore[attr-defined]
+
+
+def test_position_and_name_clash_message() -> None:
+    with pytest.raises(
+        TypeError, match=r"^x was given twice: once by position and once by name\.$"
+    ):
+        Circle(10, x=5)  # type: ignore[misc]
+    with pytest.raises(TypeError, match="^y was given twice"):
+        Line(1, 2, y=3)  # type: ignore[misc]
+    with pytest.raises(TypeError, match="^text was given twice"):
+        Text("hi", text="there")  # type: ignore[misc]
+
+
+def test_text_with_position_first_gets_a_hint() -> None:
+    with pytest.raises(TypeError, match=r'^Text starts with its words: Text\("hi", 0, 100\)$'):
+        Text(0, 100, "hi")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r'^Text starts with its words: Text\("hi", 5, 6\)$'):
+        Text(5, "hi", 6)  # type: ignore[arg-type]
+    assert Text(5).text == "5"  # type: ignore[arg-type]
+    assert Text("5", 1, 2).x == 1
+
+
+def test_second_super_init_call_is_rejected(rt: Runtime) -> None:
+    class Twice(Circle):
+        def __init__(self) -> None:
+            super().__init__()
+            super().__init__()
+
+    with pytest.raises(RuntimeError, match=r"super\(\)\.__init__\(\) was called twice"):
+        Twice()
+    assert [op["op"] for op in pending(rt)] == ["create"]

@@ -31,6 +31,10 @@ def _suggest(word: str, candidates: Any, cutoff: float) -> str | None:
     return matches[0] if matches else None
 
 
+def _is_plural_of_property(key: str, cls: type) -> bool:
+    return any(key in (f"{name}s", f"{name}es") for name in cls._props)  # type: ignore[attr-defined]
+
+
 def _no_property(cls: type, key: str, hint: str | None) -> AttributeError:
     extra = f" Did you mean {hint!r}?" if hint else ""
     return AttributeError(f"{cls.__name__} has no property {key!r}.{extra}")
@@ -46,11 +50,19 @@ def _friendly_init(init: Callable[..., None]) -> Callable[..., None]:
     def wrapper(self: Object, *args: Any, **kwargs: Any) -> None:
         cls = type(self)
         if len(args) > len(positional):
+            if not positional:
+                first = "size" if "size" in keywords else keywords[0]
+                raise TypeError(
+                    f"{cls.__name__}() needs names for its values, like {cls.__name__}({first}=50)."
+                )
             example = f", like {keywords[0]}=..." if keywords else ""
             raise TypeError(
                 f"{cls.__name__}() takes at most {len(positional)} values without a name "
                 f"({', '.join(positional)}). Give the others by name{example}"
             )
+        for key in positional[: len(args)]:
+            if key in kwargs:
+                raise TypeError(f"{key} was given twice: once by position and once by name.")
         for key in kwargs:
             if key not in positional and key not in keywords:
                 hint = _suggest(key, cls._props, 0.6)
@@ -135,10 +147,15 @@ class Object:
                 f"{cls.__name__} has no shape of its own. "
                 "Make it a subclass of Circle, Rectangle, Triangle, Line or Text."
             )
+        if "_values" in self.__dict__:
+            raise RuntimeError(
+                "super().__init__() was called twice. Call it only once, at the start of __init__."
+            )
         values: dict[str, Any] = {}
         for key, prop_ in cls._props.items():
             values[key] = prop_.validator(key, props[key]) if key in props else prop_.default
         runtime = _runtime.current()
+        runtime.ensure_room()
         if values.get("name") is not None:
             runtime.claim_name(values["name"], self)
         synced = {key: value for key, value in values.items() if cls._props[key].sync}
@@ -168,7 +185,9 @@ class Object:
         existing = getattr(cls, key, _MISSING)
         if cls._builtin or isinstance(existing, Prop):
             raise _no_property(cls, key, _suggest(key, cls._props, 0.6))
-        hint = _suggest(key, cls._props, 0.85) if existing is _MISSING else None
+        hint = None
+        if existing is _MISSING and not _is_plural_of_property(key, cls):
+            hint = _suggest(key, cls._props, 0.85)
         if hint:
             raise _no_property(cls, key, hint)
         object.__setattr__(self, key, value)
@@ -179,7 +198,7 @@ class Object:
             methods = [n for n in dir(cls) if not n.startswith("_") and callable(getattr(cls, n))]
             if cls._builtin:
                 raise _no_property(cls, key, _suggest(key, [*cls._props, *methods], 0.6))
-            hint = _suggest(key, cls._props, 0.85)
+            hint = None if _is_plural_of_property(key, cls) else _suggest(key, cls._props, 0.85)
             if hint:
                 raise _no_property(cls, key, hint)
         raise AttributeError(f"{cls.__name__!r} object has no attribute {key!r}")
@@ -707,4 +726,8 @@ class Text(Shape):
             Text("Hello!", 0, 0, size=60, color="purple")
             ```
         """
+        if isinstance(text, (int, float)) and isinstance(x, str) != isinstance(y, str):
+            words, numbers = (x, [text, y]) if isinstance(x, str) else (y, [text, x])
+            shown = ", ".join([f'"{words}"', *(repr(value) for value in numbers)])
+            raise TypeError(f"Text starts with its words: Text({shown})")
         self._setup(locals())

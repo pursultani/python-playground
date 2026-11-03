@@ -50,7 +50,8 @@ what it thinks you meant:
 | `get("bal")` | `No object is named 'bal'. Did you mean 'ball'?` |
 
 Your own classes can have any attributes you like (`self.speed = 10`). The check only steps in
-when a new name looks almost the same as a real property.
+when a new name looks almost the same as a real property. Plurals such as `self.colors` or
+`self.names` (a list of colours, a list of names) are always fine.
 
 ## Other mistakes you might meet
 
@@ -60,6 +61,12 @@ when a new name looks almost the same as a real property.
 | `Text("hi", title="x")` | `Text() got an unknown property 'title'.` |
 | Two shapes with `name="a"` | `There is already an object named 'a'. Names must be different.` |
 | `on_click(5)` | `on_click needs a function, but got 5. Give the function's name without brackets, like on_click(my_function).` |
+| `Circle(10, x=5)` | `x was given twice: once by position and once by name.` |
+| `Grid(50)` | `Grid() needs names for its values, like Grid(size=50).` |
+| `Text(0, 100, "hi")` | `Text starts with its words: Text("hi", 0, 100)` |
+| A `super().__init__()` call twice in your class | `super().__init__() was called twice. Call it only once, at the start of __init__.` |
+| Thousands of shapes in a loop | `Too many shapes (5000). Did you forget to remove() old ones?` |
+| `input()` | An `EOFError` saying that `input()` does not work in the playground. Use `on_click` or `on_key` to hear from the player instead. |
 | `Shape()` | `Shape can't be used directly. Use Circle, Rectangle, Triangle, Line or Text instead.` |
 
 ## Python's own errors

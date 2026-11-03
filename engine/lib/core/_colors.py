@@ -29,6 +29,7 @@ NAMED_COLORS = frozenset(
 )
 
 _ALL_NAMES = sorted(NAMED_COLORS | {"transparent"})
+_MIN_SIMILARITY = 0.75
 
 _HEX = re.compile(r"#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})")
 _FUNCTION = re.compile(r"(rgba?|hsla?)\(([^()]*)\)")
@@ -81,5 +82,9 @@ def suggest_color(value: str) -> str | None:
     text = value.strip().lower()
     if not text.isalpha():
         return None
-    matches = get_close_matches(text, _ALL_NAMES, n=1)
+    letters = sorted(text)
+    for name in _ALL_NAMES:
+        if sorted(name) == letters:
+            return name
+    matches = get_close_matches(text, _ALL_NAMES, n=1, cutoff=_MIN_SIMILARITY)
     return matches[0] if matches else None

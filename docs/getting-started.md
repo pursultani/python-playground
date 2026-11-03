@@ -120,7 +120,8 @@ import random
 Circle(random.randint(-300, 300), 0)
 ```
 
-`input()` does not work in Python Playground. Use clicks and keys instead.
+`input()` does not work in Python Playground (it stops the program with an error). Use
+`on_click` and `on_key` instead. See [Events](engine/events.md).
 
 ## Set up VS Code
 

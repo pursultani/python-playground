@@ -43,9 +43,19 @@ Property assignment rules:
   Same for unknown constructor keywords (`TypeError`: `Circle() got an unknown property 'colour'. Did you mean 'color'?`).
 - **Subclasses** (`class Player(Circle):`) may add their own attributes freely. Names starting
   with `_` are always free. A new attribute whose name is a close match (difflib cutoff 0.85) to
-  a real property is still rejected with the hint above.
+  a real property is still rejected with the hint above. **Exception:** a name that is exactly a
+  property name plus `s` or `es` (`self.colors`, `self.names`, `self.titles`) is always free,
+  because students keep lists with those names.
 - Constructor arguments are **keyword-only except** the leading positional ones listed per class.
   Every constructor accepts every property of the class as a keyword.
+- Constructor mistakes get plain messages: giving a value both by position and by name
+  (`Circle(10, x=5)`) says `x was given twice: once by position and once by name.`; positional
+  values for a class that takes none (`Grid(50)`, `Axis(100)`) say
+  `Grid() needs names for its values, like Grid(size=50).`; `Text(0, 100, "hi")` (position first)
+  says `Text starts with its words: Text("hi", 0, 100)`.
+- **Live object cap:** at most **5000** objects (shapes and guides) may be alive at once. Creating
+  another raises `RuntimeError`: `Too many shapes (5000). Did you forget to remove() old ones?`
+  `remove()` frees capacity. This keeps a runaway `while True: Circle()` from freezing the page.
 - Creating an object queues a `create` operation; the object appears on the next frame.
 
 ### `Shape(Object)` common properties
@@ -157,7 +167,9 @@ class Player(Circle):
 
 Must work: subclass attributes, methods, `super().__init__`, setting properties before
 `super().__init__` is NOT required to work, but must not crash the engine with an unclear error
-(raise `RuntimeError`: `Call super().__init__() before using properties`).
+(raise `RuntimeError`: `Call super().__init__() before using properties`). Calling
+`super().__init__()` a second time raises `RuntimeError` (`super().__init__() was called twice...`)
+instead of leaving a ghost object on the canvas.
 
 ## Docstrings
 

@@ -19,6 +19,7 @@ FLUSH_INTERVAL = 1 / 60
 # the browser (the flusher thread sends whatever `wait()` skipped).
 MIN_WAIT_FLUSH_INTERVAL = FLUSH_INTERVAL / 2
 EVENT_QUEUE_SIZE = 1000
+MAX_OBJECTS = 5000
 MAX_PRINT_CHARS_PER_FLUSH = 64 * 1024
 TOO_MUCH_OUTPUT = (
     "Too much was printed too fast, so some output was skipped. "
@@ -230,6 +231,13 @@ class Runtime:
     def _flush_unless_just_flushed(self) -> None:
         if time.monotonic() - self._last_flush >= MIN_WAIT_FLUSH_INTERVAL:
             self.flush()
+
+    def ensure_room(self) -> None:
+        """Raise a friendly `RuntimeError` if there are already `MAX_OBJECTS` live objects."""
+        if len(self._objects) >= MAX_OBJECTS:
+            raise RuntimeError(
+                f"Too many shapes ({MAX_OBJECTS}). Did you forget to remove() old ones?"
+            )
 
     def register(self, obj: Any, type_: str, props: dict[str, Any]) -> int:
         """Give a new object the next id and queue its `create` op."""

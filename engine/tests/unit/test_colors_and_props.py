@@ -112,3 +112,29 @@ def test_prop_returns_a_descriptor_with_the_given_default() -> None:
     declared = _props.prop(50, _props.positive_number, sync=False)
     assert declared.default == 50
     assert declared.sync is False
+
+
+@pytest.mark.parametrize(
+    ("typo", "expected"),
+    [
+        ("rde", "red"),
+        ("bleu", "blue"),
+        ("grene", "green"),
+        ("gren", "green"),
+        ("gery", "grey"),
+        ("grya", "gray"),
+        ("ornage", "orange"),
+        ("purpel", "purple"),
+        ("steelblu", "steelblue"),
+    ],
+)
+def test_real_typos_get_a_suggestion(typo: str, expected: str) -> None:
+    assert _colors.suggest_color(typo) == expected
+
+
+@pytest.mark.parametrize("wild", ["none", "colour", "banana", "asdf", "#12", "rgb"])
+def test_wild_guesses_get_no_suggestion(wild: str) -> None:
+    assert _colors.suggest_color(wild) is None
+    with pytest.raises(ValueError) as info:
+        _props.colour("color", wild)
+    assert "Did you mean" not in str(info.value)
