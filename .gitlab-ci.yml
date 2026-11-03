@@ -1,0 +1,134 @@
+# Python Playground CI: lint, tests on Python 3.10-3.13, browser tests, docs, GitLab Pages.
+# Commands live in the Makefile so a CI job can be reproduced locally with the same `make` target.
+# Reproduce a job locally with glci, e.g.: mise exec -- glci run lint
+
+stages:
+  - lint
+  - test
+  - e2e
+  - docs
+  - pages
+
+# Merge request pipelines and default-branch pipelines only, so a push to an open MR does not
+# start a second (branch) pipeline.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+default:
+  interruptible: true
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+variables:
+  UV_VERSION: "0.13.6" # keep in sync with mise.toml
+  UV_FROZEN: "1" # never touch uv.lock in CI
+  UV_LINK_MODE: copy
+  UV_CACHE_DIR: $CI_PROJECT_DIR/.uv-cache/uv
+  UV_PYTHON_INSTALL_DIR: $CI_PROJECT_DIR/.uv-cache/python
+  PYRIGHT_PYTHON_CACHE_DIR: $CI_PROJECT_DIR/.uv-cache/pyright
+  PLAYGROUND_SHOTS: $CI_PROJECT_DIR/test-results/shots
+
+# Base for every job: pinned uv image, uv cache keyed on uv.lock, `make` (not in the slim image)
+# and libatomic1 (the Node.js that pyright downloads needs it).
+.uv:
+  image: ghcr.io/astral-sh/uv:${UV_VERSION}-python3.12-trixie-slim
+  variables:
+    DEBIAN_FRONTEND: noninteractive
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .uv-cache/
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends make libatomic1
+  after_script:
+    - uv cache prune --ci
+
+# ruff, pyright and the check that the committed editor stub is up to date. Pyright also reads
+# the browser tests, so the e2e group (playwright) must be installed.
+lint:
+  extends: .uv
+  stage: lint
+  needs: []
+  script:
+    - uv sync --group e2e
+    - make lint
+    - make stubs-check
+
+# Unit, host and tools tests on every supported Python. Each leg gets its own isolated
+# environment; uv downloads the requested interpreter.
+test:
+  extends: .uv
+  stage: test
+  needs: []
+  parallel:
+    matrix:
+      - PYTHON: ["3.10", "3.11", "3.12", "3.13"]
+  script:
+    - make ci-test PYTHON=$PYTHON
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - test-results/
+    reports:
+      junit: test-results/junit-$PYTHON.xml
+
+# Browser tests. The Playwright image already ships Chromium (it must match the playwright
+# version in uv.lock), so no browser is downloaded. uv is not in that image: install the pinned one.
+e2e:
+  extends: .uv
+  stage: e2e
+  needs: []
+  image: mcr.microsoft.com/playwright/python:v1.64.1-noble # playwright 1.64.1 in uv.lock
+  timeout: 20 minutes
+  variables:
+    UV_PYTHON_DOWNLOADS: never
+    UV_UNMANAGED_INSTALL: /usr/local/bin
+  before_script:
+    - !reference [.uv, before_script]
+    - curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
+  script:
+    - make ci-e2e
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - test-results/
+    reports:
+      junit: test-results/junit-e2e.xml
+
+# Strict docs build; runs on merge requests too so broken docs fail early.
+docs:
+  extends: .uv
+  stage: docs
+  needs: []
+  script:
+    - make ci-docs
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - site/
+
+# Publish the docs on GitLab Pages (default branch only, after every other job passed).
+pages:
+  extends: .uv
+  stage: pages
+  interruptible: false
+  variables:
+    SITE_URL: $CI_PAGES_URL
+  script:
+    - make ci-docs SITE_DIR=public
+  pages: true
+  artifacts:
+    paths:
+      - public/
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

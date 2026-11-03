@@ -80,3 +80,19 @@ check: lint test stubs-check docs ## Everything CI checks: lint, test, stubs-che
 clean: ## Remove build output, caches and __pycache__ folders
 	rm -rf site public .pytest_cache .ruff_cache
 	find . -name .venv -prune -o -name .git -prune -o -type d -name __pycache__ -exec rm -rf {} +
+
+# CI helpers (used by .gitlab-ci.yml; also handy to reproduce a CI job locally).
+PYTHON ?= 3.12
+SITE_DIR ?= site
+
+.PHONY: ci-test ci-e2e ci-docs
+
+ci-test: _need-uv ## CI: fast tests on one Python (make ci-test PYTHON=3.10), JUnit in test-results/
+	$(RUN) --python $(PYTHON) --isolated --group dev pytest -m "not e2e" --ignore=engine/tests/e2e --ignore=engine/tests/browser --junitxml=test-results/junit-$(PYTHON).xml
+
+ci-e2e: _need-uv ## CI: browser tests with the Chromium that is already installed (Playwright image)
+	$(UV) sync --group dev --group e2e
+	$(RUN) --no-sync pytest -m e2e --junitxml=test-results/junit-e2e.xml
+
+ci-docs: _need-uv ## CI: strict docs build into SITE_DIR (make ci-docs SITE_DIR=public)
+	NO_MKDOCS_2_WARNING=1 $(RUN) --group docs mkdocs build --strict --site-dir $(SITE_DIR)
