@@ -1,0 +1,9 @@
+/* Keep short code samples in the first column of a table on one line. */
+.md-typeset table:not([class]) td:first-child code {
+  white-space: nowrap;
+}
+
+/* The signature and "Parameters" blocks are the main content of reference pages: give them air. */
+.md-typeset .doc-heading {
+  margin-top: 2.2em;
+}
