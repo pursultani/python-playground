@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Python Playground</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f6bed'/%3E%3Cpath d='M12 9l12 7-12 7z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-state="starting" data-run="0" data-conn="connecting">
+  <header id="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="9" fill="currentColor"/>
+        <path d="M12 9l12 7-12 7z" fill="#fff"/>
+      </svg>
+      <span class="brand-name">Python Playground</span>
+    </div>
+    <span id="script-name" class="script-name" hidden></span>
+    <span class="spacer"></span>
+    <span id="status" class="status" data-state="starting" role="status" aria-live="polite">
+      <span class="dot"></span><span class="label">Starting…</span>
+    </span>
+    <button id="restart" class="btn" type="button" title="Run the program again">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="btn-label">Restart</span>
+    </button>
+  </header>
+
+  <div id="banner" role="alert" hidden>Disconnected: waiting for the playground…</div>
+
+  <main id="stage">
+    <div id="canvas-wrap">
+      <svg id="canvas" viewBox="-400 -300 800 600" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <rect id="background" x="-400" y="-300" width="800" height="600" fill="white"/>
+        <g id="guides"></g>
+        <g id="shapes"></g>
+      </svg>
+    </div>
+    <section id="error-panel" role="alert" hidden></section>
+  </main>
+
+  <section id="console-panel" data-open="true">
+    <div class="console-head">
+      <button id="console-toggle" class="toggle" type="button" aria-expanded="true" aria-controls="console">
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Console</span>
+        <span id="console-count" class="count" hidden></span>
+      </button>
+      <button id="console-clear" class="btn ghost" type="button">Clear</button>
+    </div>
+    <div id="console" tabindex="-1"></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
