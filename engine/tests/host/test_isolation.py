@@ -263,6 +263,11 @@ def _running(pid: int) -> bool:
     """Alive and not a zombie."""
     if not pid_alive(pid):
         return False
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            return stat.read().rpartition(")")[2].split()[0] != "Z"
+    except OSError:
+        pass
     state = subprocess.run(
         ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
     ).stdout.strip()

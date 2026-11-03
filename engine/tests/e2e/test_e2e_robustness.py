@@ -12,6 +12,19 @@ PID_LOOP = "import os\nprint(os.getpid())\nwhile True:\n    wait(0.05)\n"
 
 
 def children_running(pg: Playground) -> list[int]:
+    if os.path.isdir("/proc/self"):
+        pids = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit() or int(entry) == os.getpid():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as cmdline:
+                    text = cmdline.read().replace(b"\0", b" ").decode(errors="replace")
+            except OSError:
+                continue
+            if "core.runner" in text and text.rstrip().endswith(str(pg.script)):
+                pids.append(int(entry))
+        return pids
     result = subprocess.run(
         ["pgrep", "-f", f"core.runner.* {pg.script}"], capture_output=True, text=True
     )
