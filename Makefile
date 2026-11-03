@@ -45,10 +45,10 @@ test: _need-uv ## Run the fast tests (everything except e2e)
 	$(RUN) pytest -m "not e2e"
 
 test-min: _need-uv ## Same as test, on Python 3.10 in an isolated environment
-	$(RUN) --python 3.10 --isolated --group dev pytest -m "not e2e" --ignore=engine/tests/e2e
+	$(RUN) --python 3.10 --isolated --group dev pytest -m "not e2e" --ignore=engine/tests/e2e --ignore=engine/tests/browser
 
 e2e: _need-uv ## Run the browser tests (needs: make install-browsers)
-	$(RUN) pytest -m e2e engine/tests/e2e
+	$(RUN) pytest -m e2e
 
 lint: _need-uv ## ruff check, ruff format --check, pyright
 	$(RUN) ruff check engine
@@ -69,7 +69,7 @@ stubs-check: _need-uv ## Fail if the committed stub is out of date
 
 docs: _need-uv ## Build the documentation site into site/ (strict)
 	@test -f mkdocs.yml || { echo "mkdocs.yml does not exist yet (docs not written)."; exit 1; }
-	$(RUN) mkdocs build --strict
+	NO_MKDOCS_2_WARNING=1 $(RUN) mkdocs build --strict
 
 docs-serve: _need-uv ## Preview the documentation site while editing
 	@test -f mkdocs.yml || { echo "mkdocs.yml does not exist yet (docs not written)."; exit 1; }
