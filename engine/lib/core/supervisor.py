@@ -15,6 +15,7 @@ import json
 import os
 import queue
 import select
+import signal
 import socket
 import subprocess
 import sys
@@ -40,6 +41,16 @@ MAX_BODY_BYTES = 64 * 1024
 MAX_CLIENT_BACKLOG = 5000
 SSE_RETRY = b"retry: 500\n\n"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+MAX_DIR_ENTRIES = 200
+MAX_WATCHED_DIRS = 50
+MAX_WATCHED_FILES = 500
+SKIPPED_DIRS = {"venv", "env", "node_modules", "site-packages", "__pycache__"}
+HARMLESS_MODULE_NAMES = {"test", "this", "antigravity", "idlelib"}
+CHILD_BOOT = (
+    "import os,sys;c=os.getcwd();"
+    "sys.path[:]=[p for p in sys.path if p and os.path.abspath(p)!=c];"
+    "from core.runner import run;run()"
+)
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -66,42 +77,128 @@ class PortUnavailable(Exception):
 
 def default_child_argv(script: str) -> list[str]:
     """The command that runs a script in a child process."""
-    return [sys.executable, "-u", "-m", "core.runner", script]
+    return [sys.executable, "-u", "-c", CHILD_BOOT, script]
 
 
-def _hostname(value: str, is_url: bool = False) -> str | None:
-    """The host part of a ``Host`` header (or of an ``Origin`` URL when ``is_url``)."""
+def _authority(value: str) -> tuple[str, int] | None:
+    """Split ``host`` or ``host:port`` (``[::1]:port`` too) into ``(host, port)``.
+
+    A missing port means 80. Anything odd (``@``, slashes, spaces, a bad port) gives ``None``.
+    """
+    value = value.strip()
+    if not value or any(char in value for char in "@/\\?# \t\r\n"):
+        return None
+    if value.startswith("["):
+        host, bracket, rest = value[1:].partition("]")
+        if not bracket or (rest and not rest.startswith(":")):
+            return None
+        port_text = rest[1:]
+    else:
+        host, colon, port_text = value.rpartition(":")
+        if not colon:
+            host, port_text = value, ""
+    if not host or (port_text and not (port_text.isascii() and port_text.isdigit())):
+        return None
+    port = int(port_text) if port_text else 80
+    return (host.lower(), port) if port <= 65535 else None
+
+
+def _origin_authority(value: str) -> tuple[str, int] | None:
     try:
-        return urlsplit(value.strip() if is_url else "//" + value.strip()).hostname
+        parts = urlsplit(value.strip())
     except ValueError:
         return None
+    if parts.scheme != "http" or not parts.netloc:
+        return None
+    return _authority(parts.netloc)
 
 
-def _scan_python_files(script_dir: Path) -> dict[str, tuple[int, int]]:
+def _is_local(authority: tuple[str, int] | None, port: int) -> bool:
+    return authority is not None and authority[0] in LOCAL_HOSTS and authority[1] == port
+
+
+def _is_home_or_root(directory: Path) -> bool:
+    try:
+        real = directory.resolve()
+        return real == real.parent or real == Path.home().resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _scan_python_files(script_dir: Path, descend: bool = True) -> dict[str, tuple[int, int]]:
     """Map every watched ``*.py`` file to ``(mtime_ns, size)``.
 
-    Watches the script directory and one level of sub-directories (not hidden or ``__*__`` ones).
+    Watches the script directory and, if ``descend``, one level of sub-directories. Hidden,
+    ``__*__``, virtual-environment and ``node_modules`` folders are skipped, and so is any
+    sub-directory with more than ``MAX_DIR_ENTRIES`` entries, so the work stays small.
     """
     found: dict[str, tuple[int, int]] = {}
+    subdirs: list[str] = []
 
-    def scan(directory: Path, descend: bool) -> None:
+    def scan(directory: str, top: bool) -> None:
         try:
-            entries = list(os.scandir(directory))
+            with os.scandir(directory) as iterator:
+                count = 0
+                for entry in iterator:
+                    count += 1
+                    if not top and count > MAX_DIR_ENTRIES:
+                        return
+                    if len(found) >= MAX_WATCHED_FILES:
+                        return
+                    try:
+                        if entry.name.endswith(".py"):
+                            if entry.is_file():
+                                info = entry.stat()
+                                found[entry.path] = (info.st_mtime_ns, info.st_size)
+                        elif (
+                            top
+                            and descend
+                            and len(subdirs) < MAX_WATCHED_DIRS
+                            and not entry.name.startswith((".", "__"))
+                            and entry.name not in SKIPPED_DIRS
+                            and entry.is_dir()
+                        ):
+                            subdirs.append(entry.path)
+                    except OSError:
+                        continue
         except OSError:
             return
-        for entry in entries:
-            try:
-                if entry.is_dir():
-                    if descend and not entry.name.startswith((".", "__")):
-                        scan(Path(entry.path), False)
-                elif entry.name.endswith(".py"):
-                    info = entry.stat()
-                    found[entry.path] = (info.st_mtime_ns, info.st_size)
-            except OSError:
-                continue
 
-    scan(script_dir, True)
+    scan(str(script_dir), True)
+    for path in subdirs:
+        scan(path, False)
     return found
+
+
+def shadowing_warnings(script_dir: Path, script_name: str) -> list[str]:
+    """Plain-English warnings for ``*.py`` files named like a module that comes with Python."""
+    try:
+        names = sorted(entry.name for entry in os.scandir(script_dir) if entry.name.endswith(".py"))
+    except OSError:
+        return []
+    stdlib: frozenset[str] = getattr(sys, "stdlib_module_names", frozenset())
+    warnings: list[str] = []
+    for name in names:
+        stem = name[:-3]
+        suggestion = f"my_{stem}.py"
+        if stem == "core":
+            warnings.append(
+                f"{name} has the same name as the Python Playground engine, so a file that says "
+                f"import core would not get this one. Rename it, for example {suggestion}."
+            )
+        elif stem in stdlib and stem not in HARMLESS_MODULE_NAMES and not stem.startswith("__"):
+            if name == script_name:
+                warnings.append(
+                    f"{name} has the same name as a Python module that comes with Python. "
+                    f"It still runs, but import {stem} gives you Python's own {stem}, not this "
+                    f"file. Rename it, for example {suggestion}."
+                )
+            else:
+                warnings.append(
+                    f"{name} has the same name as a Python module that comes with Python, so "
+                    f"Python's own {stem} can't be used. Rename it, for example {suggestion}."
+                )
+    return warnings
 
 
 class _Client:
@@ -126,17 +223,31 @@ class _Child:
         with contextlib.suppress(OSError, ValueError):
             self._stdin.write(message)
 
+    def _stop_tree(self, hard: bool) -> None:
+        """Ask (or, if ``hard``, force) the child and everything it started to stop."""
+        process = self.process
+        if os.name == "nt":
+            with contextlib.suppress(OSError):
+                process.kill() if hard else process.terminate()
+            return
+        with contextlib.suppress(OSError):
+            os.killpg(process.pid, signal.SIGKILL if hard else signal.SIGTERM)
+
+    def sweep(self) -> None:
+        """Kill programs the child started and left running (it leads its own session)."""
+        if os.name != "nt":
+            self._stop_tree(hard=True)
+
     def kill(self) -> None:
         process = self.process
         if process.poll() is None:
-            with contextlib.suppress(OSError):
-                process.terminate()
+            self._stop_tree(hard=False)
             try:
                 process.wait(timeout=KILL_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                with contextlib.suppress(OSError):
-                    process.kill()
+                self._stop_tree(hard=True)
                 process.wait()
+        self.sweep()
         try:
             if process.stdin is not None:
                 process.stdin.close()
@@ -191,6 +302,8 @@ class Supervisor:
         self._clients: list[_Client] = []
         self._child: _Child | None = None
         self._run = 0
+        self._warned: set[str] = set()
+        self._watch_subdirs = not _is_home_or_root(self.script_dir)
         self._server: _Server | None = None
         self._threads: list[threading.Thread] = []
         self.port = 0
@@ -295,6 +408,7 @@ class Supervisor:
                 self._mirror.reset(self._run)
                 self._broadcast({"t": proto.RUN, "run": self._run})
                 self._broadcast_status()
+                self._announce_shadowing()
             try:
                 child = self._spawn()
             except OSError as exc:
@@ -306,6 +420,16 @@ class Supervisor:
                     return
                 self._child = child
             self._spawn_thread(lambda: self._read_child(child), "child-reader")
+
+    def _announce_shadowing(self) -> None:
+        warnings = shadowing_warnings(self.script_dir, self.script.name)
+        for text in warnings:
+            message = {"t": proto.PRINT, "text": f"Warning: {text}\n", "stream": "stderr"}
+            self._mirror.apply(message)
+            self._broadcast(message)
+            if text not in self._warned:
+                self._log(f"Warning: {text}")
+        self._warned = set(warnings)
 
     def send_event(self, event: dict[str, Any]) -> None:
         """Forward a validated browser event to the child if the program is running."""
@@ -383,6 +507,7 @@ class Supervisor:
                 self._on_message(child, message)
         finally:
             child.process.wait()
+            child.sweep()
             child.stdout.close()
             self._on_exit(child)
 
@@ -451,15 +576,15 @@ class Supervisor:
 
     def _watch(self) -> None:
         settle = self.poll_interval / 2
-        before = _scan_python_files(self.script_dir)
+        before = _scan_python_files(self.script_dir, self._watch_subdirs)
         while not self._stop_event.wait(self.poll_interval):
-            now = _scan_python_files(self.script_dir)
+            now = _scan_python_files(self.script_dir, self._watch_subdirs)
             if now == before:
                 continue
             while True:
                 if self._stop_event.wait(settle):
                     return
-                again = _scan_python_files(self.script_dir)
+                again = _scan_python_files(self.script_dir, self._watch_subdirs)
                 if again == now:
                     break
                 now = again
@@ -514,20 +639,25 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
+            if content_type.startswith("text/html"):
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         self.end_headers()
         if body:
             self.wfile.write(body)
 
     def _allowed(self, is_post: bool) -> bool:
+        own_port = cast(_Server, self.server).server_address[1]
         host = self.headers.get("Host")
-        if host is not None and _hostname(host) not in LOCAL_HOSTS:
+        origin = self.headers.get("Origin") if is_post else None
+        ok = True
+        if host is not None:
+            ok = _is_local(_authority(host), own_port)
+        if ok and origin is not None:
+            ok = _is_local(_origin_authority(origin), own_port)
+        if not ok:
             self._respond(403, b"Forbidden: this page only works on this computer.\n")
-            return False
-        origin = self.headers.get("Origin")
-        if is_post and origin is not None and _hostname(origin, is_url=True) not in LOCAL_HOSTS:
-            self._respond(403, b"Forbidden: this page only works on this computer.\n")
-            return False
-        return True
+        return ok
 
     def _path(self) -> str:
         return self.path.split("?", 1)[0].split("#", 1)[0]

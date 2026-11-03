@@ -13,7 +13,7 @@ PID_LOOP = "import os\nprint(os.getpid())\nwhile True:\n    wait(0.05)\n"
 
 def children_running(pg: Playground) -> list[int]:
     result = subprocess.run(
-        ["pgrep", "-f", f"core.runner {pg.script}"], capture_output=True, text=True
+        ["pgrep", "-f", f"core.runner.* {pg.script}"], capture_output=True, text=True
     )
     return [int(line) for line in result.stdout.split()]
 
@@ -217,3 +217,39 @@ def test_syntax_error_in_an_imported_module(pg: Playground):
     pg.wait_state("crashed")
     assert "SyntaxError" in pg.error_text()
     assert "helper.py" in pg.error_text()
+
+
+def test_files_named_like_python_modules_warn_but_do_not_break_the_run(pg: Playground):
+    (pg.directory / "queue.py").write_text("raise RuntimeError('the wrong queue')\n")
+    (pg.directory / "json.py").write_text("raise RuntimeError('the wrong json')\n")
+    pg.start("import json, queue\nCircle()\nprint('still works')\n")
+    pg.wait_state("finished")
+    console = pg.console()
+    assert "queue.py has the same name as a Python module that comes with Python" in console
+    assert "Rename it, for example my_queue.py." in console
+    assert "json.py has the same name" in console
+    assert console.endswith("still works\n")
+    assert pg.page.eval_on_selector_all("#console > span.stderr", "els => els.length") >= 1
+
+
+def test_a_script_named_random_runs_and_is_warned_about(pg: Playground):
+    pg.script = pg.directory / "random.py"
+    pg.start("import random\nCircle()\nprint(random.randint(1, 1))\n")
+    pg.wait_state("finished")
+    assert "random.py has the same name as a Python module" in pg.console()
+    assert pg.console().endswith("1\n")
+
+
+def test_input_explains_that_it_does_not_work(pg: Playground):
+    pg.start("name = input('Your name? ')\n")
+    pg.wait_state("crashed")
+    assert "input() does not work in Python Playground" in pg.error_text()
+    assert "on_click or on_key" in pg.error_text()
+
+
+def test_a_file_that_is_not_utf8_gets_a_friendly_error(pg: Playground):
+    pg.start("print('héllo')\n".encode("latin-1"))
+    pg.wait_state("crashed")
+    text = pg.error_text()
+    assert "main.py isn't saved as UTF-8. Save the file again as UTF-8." in text
+    assert str(pg.directory) not in text

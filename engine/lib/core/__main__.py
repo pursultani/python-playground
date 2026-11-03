@@ -1,4 +1,4 @@
-"""Command line: ``python -m core <script.py> [--port N] [--no-browser]``."""
+"""Command line: ``python -m core <script.py> [--port N] [--no-browser]`` (or ``./run.sh``)."""
 
 from __future__ import annotations
 
@@ -12,10 +12,19 @@ from typing import Any
 
 DEFAULT_PORT = 8765
 PORT_TRIES = 20
-USAGE_HINT = "Try:  python -m core main.py"
+DEFAULT_PROG = "python -m core"
 
 _print_lock = threading.Lock()
 _held: list[str] | None = None
+
+
+def _prog() -> str:
+    """How the student started us (``./run.sh``), for messages. Set by run.sh."""
+    return os.environ.get("PLAYGROUND_PROG") or DEFAULT_PROG
+
+
+def _usage_hint() -> str:
+    return f"Try:  {_prog()} main.py"
 
 
 def _say(text: str) -> None:
@@ -46,7 +55,7 @@ def _fail(text: str, code: int) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m core",
+        prog=_prog(),
         description="Run a Python Playground program and show it in your browser.",
     )
     parser.add_argument("script", nargs="?", help="the Python file to run, for example main.py")
@@ -60,7 +69,7 @@ def _parser() -> argparse.ArgumentParser:
 def _check_script(script: str) -> str | None:
     """Return a friendly problem description, or ``None`` if the file is fine."""
     if os.path.isdir(script):
-        return f"'{script}' is a folder, not a Python file. {USAGE_HINT}"
+        return f"'{script}' is a folder, not a Python file. {_usage_hint()}"
     if not os.path.exists(script):
         return f"I can't find the file '{script}'. Check the name and the folder, then try again."
     if not os.access(script, os.R_OK):
@@ -84,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parser().parse_args(argv)
     if args.script is None:
-        return _fail(f"Please tell me which file to run. {USAGE_HINT}", 2)
+        return _fail(f"Please tell me which file to run. {_usage_hint()}", 2)
     problem = _check_script(args.script)
     if problem:
         return _fail(problem, 2)
@@ -95,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
 
     global _held
     _held = []
+    previous: Any = None
+    with contextlib.suppress(ValueError, OSError):
+        previous = signal.signal(signal.SIGTERM, _raise_exit)
     exact = args.port is not None
     port: int = DEFAULT_PORT if args.port is None else args.port
     supervisor = Supervisor(
@@ -105,23 +117,20 @@ def main(argv: list[str] | None = None) -> int:
         log=_say,
     )
     try:
-        supervisor.start()
-    except PortUnavailable as exc:
-        if exact:
+        try:
+            supervisor.start()
+        except PortUnavailable as exc:
+            if exact:
+                return _fail(
+                    f"Port {exc.first} is already in use. "
+                    "Close the other program, or pick a different port with --port.",
+                    1,
+                )
             return _fail(
-                f"Port {exc.first} is already in use. "
-                "Close the other program, or pick a different port with --port.",
+                f"I could not find a free port between {exc.first} and {exc.last}. "
+                "Close some programs, or pick a port with --port.",
                 1,
             )
-        return _fail(
-            f"I could not find a free port between {exc.first} and {exc.last}. "
-            "Close some programs, or pick a port with --port.",
-            1,
-        )
-
-    with contextlib.suppress(ValueError, OSError):
-        signal.signal(signal.SIGTERM, _raise_exit)
-    try:
         _start_printing(
             [
                 f"Python Playground running at {supervisor.url.rstrip('/')}  (Ctrl+C to stop)",
@@ -132,8 +141,11 @@ def main(argv: list[str] | None = None) -> int:
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        with contextlib.suppress(KeyboardInterrupt):
+        with contextlib.suppress(KeyboardInterrupt, SystemExit):
             supervisor.stop()
+        if previous is not None:
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signal.SIGTERM, previous)
     return 0
 
 

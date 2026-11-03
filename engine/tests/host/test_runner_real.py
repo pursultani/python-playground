@@ -15,6 +15,7 @@ core = pytest.importorskip("core")
 if not hasattr(core, "namespace"):
     pytest.skip("core.namespace() is not available yet", allow_module_level=True)
 
+from core.supervisor import default_child_argv  # noqa: E402
 from host_helpers import pid_alive, wait_until  # noqa: E402
 
 LIB = str(Path(core.__file__).resolve().parent.parent)
@@ -23,13 +24,16 @@ LIB = str(Path(core.__file__).resolve().parent.parent)
 class Child:
     """The runner as a subprocess, with its protocol messages collected on a thread."""
 
-    def __init__(self, directory: Path, source: str, name: str = "main.py") -> None:
+    def __init__(self, directory: Path, source: str | bytes | None, name: str = "main.py") -> None:
         self.directory = directory
         self.script = directory / name
-        self.script.write_text(source, encoding="utf-8")
+        if isinstance(source, bytes):
+            self.script.write_bytes(source)
+        elif source is not None:
+            self.script.write_text(source, encoding="utf-8")
         env = dict(os.environ, PYTHONPATH=LIB, PYTHONDONTWRITEBYTECODE="1")
         self.process = subprocess.Popen(
-            [sys.executable, "-u", "-m", "core.runner", str(self.script)],
+            default_child_argv(str(self.script)),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -82,7 +86,7 @@ class Child:
 def child(tmp_path):
     made: list[Child] = []
 
-    def start(source: str, name: str = "main.py") -> Child:
+    def start(source: str | bytes | None, name: str = "main.py") -> Child:
         instance = Child(tmp_path, source, name)
         made.append(instance)
         return instance
@@ -157,7 +161,7 @@ def test_exit_and_sys_exit_count_as_finished(child):
 
 def test_missing_script_is_reported_as_an_error(tmp_path):
     process = subprocess.Popen(
-        [sys.executable, "-m", "core.runner", str(tmp_path / "gone.py")],
+        default_child_argv(str(tmp_path / "gone.py")),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         env=dict(os.environ, PYTHONPATH=LIB),
@@ -169,7 +173,12 @@ def test_missing_script_is_reported_as_an_error(tmp_path):
         assert process.wait(timeout=10) == 1
     finally:
         process.kill()
-    assert messages[-1]["t"] == "error" and messages[-1]["kind"] == "FileNotFoundError"
+    assert messages[-1]["t"] == "error"
+    assert (
+        messages[-1]["message"]
+        == "I can't find gone.py. Check that the file is still in its folder."
+    )
+    assert messages[-1]["frames"] == []
 
 
 def test_stray_writes_to_fd_1_do_not_corrupt_the_protocol(child):
@@ -180,10 +189,22 @@ def test_stray_writes_to_fd_1_do_not_corrupt_the_protocol(child):
     assert "junk from C land" in run.stderr()
 
 
-def test_input_is_not_supported_and_raises_eof_error(child):
+def test_input_is_not_supported_and_explains_why(child):
     run = child("input('name? ')\n")
     assert run.wait() == 1
-    assert run.messages[-1]["kind"] == "EOFError"
+    error = run.messages[-1]
+    assert error["kind"] == "EOFError"
+    assert error["message"] == (
+        "input() does not work in Python Playground. "
+        "Use on_click or on_key to get answers from the player."
+    )
+
+
+@pytest.mark.parametrize("call", ["sys.stdin.read()", "sys.stdin.readline()", "list(sys.stdin)"])
+def test_every_way_of_reading_stdin_explains_why(child, call):
+    run = child(f"import sys\n{call}\n")
+    assert run.wait() == 1
+    assert "input() does not work in Python Playground" in run.messages[-1]["message"]
 
 
 def test_script_directory_is_importable_and_module_errors_show_relative_names(child, tmp_path):

@@ -5,7 +5,10 @@ Only frames from the student's own files are kept. See ``protocol.md`` ("Error p
 
 from __future__ import annotations
 
+import builtins
+import difflib
 import os
+import sys
 import sysconfig
 import traceback
 from typing import Any
@@ -167,7 +170,59 @@ def _syntax_frame(
     return real, number, _frame(relative, "<module>", number, raw, columns)
 
 
-def _message(exc: BaseException) -> str:
+def _failing_frame(exc: BaseException, script_dir: str) -> Any:
+    """The innermost frame in the student's files (else the innermost frame), or ``None``."""
+    last = mine = None
+    tb = exc.__traceback__
+    while tb is not None:
+        last = tb.tb_frame
+        if _user_relpath(last.f_code.co_filename, script_dir):
+            mine = last
+        tb = tb.tb_next
+    return mine or last
+
+
+def _closest(name: str, candidates: Any) -> str | None:
+    pool = sorted({c for c in candidates if isinstance(c, str) and c != name})
+    matches = difflib.get_close_matches(name, pool, n=1)
+    return matches[0] if matches else None
+
+
+def _suggestion(exc: BaseException, script_dir: str) -> str | None:
+    """A "Did you mean ...?" word for a mistyped name or attribute, like Python 3.12+ gives."""
+    name = getattr(exc, "name", None)
+    if not isinstance(name, str) or not name:
+        return None
+    if isinstance(exc, NameError):
+        frame = _failing_frame(exc, script_dir)
+        if frame is None:
+            return None
+        return _closest(name, [*frame.f_locals, *frame.f_globals, *vars(builtins)])
+    if isinstance(exc, AttributeError):
+        target = getattr(exc, "obj", None)
+        if target is None:
+            return None
+        try:
+            names = [n for n in dir(target) if name.startswith("_") or not n.startswith("_")]
+        except Exception:
+            return None
+        return _closest(name, names)
+    return None
+
+
+def _message(exc: BaseException, script_dir: str = "") -> str:
+    text = _plain_message(exc)
+    if sys.version_info < (3, 12) and "Did you mean" not in text:
+        try:
+            word = _suggestion(exc, script_dir)
+        except Exception:
+            word = None
+        if word:
+            text += f". Did you mean: '{word}'?"
+    return text
+
+
+def _plain_message(exc: BaseException) -> str:
     if isinstance(exc, SyntaxError) and exc.msg:
         return str(exc.msg)
     formatted = traceback.TracebackException(
@@ -230,7 +285,7 @@ def _build(exc: BaseException, script_dir: str) -> dict[str, Any]:
     return {
         "t": "error",
         "kind": type(exc).__name__,
-        "message": _message(exc),
+        "message": _message(exc, root),
         "frames": [frame for _, _, frame in entries],
         "context": context,
     }

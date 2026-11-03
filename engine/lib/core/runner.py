@@ -1,6 +1,7 @@
 """Child process entry point: run the student's script and report to the supervisor.
 
-Started by the supervisor as ``python -m core.runner <abs script path>``. See ``protocol.md``.
+Started by the supervisor as ``python -c <boot> <abs script path>`` (the boot code removes the
+script's folder from ``sys.path`` before importing ``core``). See ``protocol.md``.
 """
 
 from __future__ import annotations
@@ -9,12 +10,51 @@ import contextlib
 import io
 import json
 import os
+import signal
 import sys
 import threading
 import tokenize
 import traceback
 from collections.abc import Callable
 from typing import Any, TextIO
+
+NO_INPUT_MESSAGE = (
+    "input() does not work in Python Playground. "
+    "Use on_click or on_key to get answers from the player."
+)
+EARLY_IMPORTS = ("difflib", "inspect", "json", "linecache", "queue", "threading", "tokenize")
+
+
+class _NoInput(io.TextIOBase):
+    """``sys.stdin`` for students: reading from it explains why that cannot work."""
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int | None = -1) -> str:
+        raise EOFError(NO_INPUT_MESSAGE)
+
+    def readline(self, size: int | None = -1) -> str:
+        raise EOFError(NO_INPUT_MESSAGE)
+
+    def readlines(self, hint: int = -1) -> list[str]:
+        raise EOFError(NO_INPUT_MESSAGE)
+
+    def __next__(self) -> str:
+        raise EOFError(NO_INPUT_MESSAGE)
+
+
+class _ScriptProblem(Exception):
+    """The script file itself cannot be used. The message is already friendly."""
+
+
+def _stop_with_children() -> None:
+    """Exit now, taking along programs the script started (when this process leads a group)."""
+    if os.name != "nt":
+        with contextlib.suppress(OSError):
+            if os.getpgrp() == os.getpid():
+                os.killpg(os.getpid(), signal.SIGKILL)
+    os._exit(0)
 
 
 def _read_events(stream: TextIO, runtime: Any) -> None:
@@ -25,7 +65,7 @@ def _read_events(stream: TextIO, runtime: Any) -> None:
         except (OSError, ValueError):
             line = ""
         if not line:
-            os._exit(0)
+            _stop_with_children()
         try:
             event = json.loads(line)
         except ValueError:
@@ -35,19 +75,52 @@ def _read_events(stream: TextIO, runtime: Any) -> None:
                 runtime.feed_event(event)
 
 
-def _execute(script: str, namespace: Callable[[], dict[str, Any]]) -> BaseException | None:
-    """Compile and run the script. Returns the uncaught exception, or ``None`` if it finished."""
+def _read_source(script: str) -> str:
+    name = os.path.basename(script)
     try:
         # Compile text, not bytes: Python 3.10 reports SyntaxError columns in bytes for bytes.
         with tokenize.open(script) as handle:
             source = handle.read()
-        code = compile(source, script, "exec")
+    except FileNotFoundError:
+        raise _ScriptProblem(
+            f"I can't find {name}. Check that the file is still in its folder."
+        ) from None
+    except (UnicodeDecodeError, SyntaxError, LookupError):
+        raise _ScriptProblem(
+            f"{name} isn't saved as UTF-8. Save the file again as UTF-8."
+        ) from None
+    except OSError:
+        raise _ScriptProblem(
+            f"I can't read {name}. Check that you are allowed to open it."
+        ) from None
+    if "\x00" in source:
+        raise _ScriptProblem(
+            f"{name} has a null byte in it, so Python can't read it. "
+            "Save the file again as a plain text file in UTF-8."
+        )
+    return source
+
+
+def _execute(script: str, namespace: Callable[[], dict[str, Any]]) -> BaseException | None:
+    """Compile and run the script. Returns the uncaught exception, or ``None`` if it finished."""
+    try:
+        code = compile(_read_source(script), script, "exec")
         exec(code, {"__name__": "__main__", "__file__": script, **namespace()})
     except (SystemExit, KeyboardInterrupt):
         return None
     except BaseException as exc:
         return exc
     return None
+
+
+def run() -> None:
+    """Run ``main()`` and exit the process (the entry point used by the supervisor)."""
+    try:
+        code = main()
+    except BaseException:
+        traceback.print_exc(file=sys.__stderr__)
+        code = 1
+    os._exit(code)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     script = os.path.abspath(args[0])
     script_dir = os.path.dirname(script)
 
+    for name in EARLY_IMPORTS:
+        with contextlib.suppress(ImportError):
+            __import__(name)
     from core import namespace
     from core._errors import build_error_payload
     from core._protocol import JsonLineWriter
@@ -81,16 +157,26 @@ def main(argv: list[str] | None = None) -> int:
     runtime.start()
     sys.stdout = runtime.print_stream("stdout")
     sys.stderr = runtime.print_stream("stderr")
-    sys.stdin = io.StringIO("")
+    sys.stdin = _NoInput()
     threading.Thread(target=_read_events, args=(events_in, runtime), daemon=True).start()
 
     send({"t": "hello"})
-    if sys.path[:1] != [script_dir]:
-        sys.path.insert(0, script_dir)
+    if script_dir not in sys.path:
+        sys.path.append(script_dir)
     sys.argv = [script]
 
     error = _execute(script, namespace)
-    payload = build_error_payload(error, script_dir) if error is not None else None
+    payload = None
+    if isinstance(error, _ScriptProblem):
+        payload = {
+            "t": "error",
+            "kind": "Error",
+            "message": str(error),
+            "frames": [],
+            "context": [],
+        }
+    elif error is not None:
+        payload = build_error_payload(error, script_dir)
     with contextlib.suppress(Exception):
         runtime.stop()
     send(payload if payload is not None else {"t": "end"})
@@ -98,9 +184,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    try:
-        code = main()
-    except BaseException:
-        traceback.print_exc(file=sys.__stderr__)
-        code = 1
-    os._exit(code)
+    run()

@@ -536,8 +536,25 @@ class TestHttp:
         (static / "link.txt").symlink_to(tmp_path / "secret.txt")
         assert request(server.port, "GET", "/static/link.txt")[0] == 404
 
-    @pytest.mark.parametrize("host", ["evil.example", "evil.example:80", "127.0.0.1.evil.com"])
-    def test_non_local_host_headers_are_refused(self, server, host):
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "evil.example",
+            "evil.example:80",
+            "127.0.0.1.evil.com",
+            "127.0.0.1@evil.example",
+            "evil.example@127.0.0.1",
+            "127.0.0.1:80@evil.example",
+            "127.0.0.1:abc",
+            "127.0.0.1:",
+            "127.0.0.1/evil",
+            "localhost:1",
+            "localhost",
+            "[::1]:80",
+            "",
+        ],
+    )
+    def test_non_local_or_odd_host_headers_are_refused(self, server, host):
         port = server.port
         assert request(port, "GET", "/", host=host)[0] == 403
         assert request(port, "GET", "/static/app.js", host=host)[0] == 403
@@ -545,11 +562,9 @@ class TestHttp:
         assert request(port, "POST", "/event", b"{}", host=host)[0] == 403
         assert request(port, "GET", "/events", host=host)[0] == 403
 
-    @pytest.mark.parametrize(
-        "host", ["127.0.0.1", "127.0.0.1:8765", "localhost", "localhost:9000", "[::1]:80"]
-    )
-    def test_local_host_headers_are_accepted(self, server, host):
-        assert request(server.port, "GET", "/", host=host)[0] == 200
+    @pytest.mark.parametrize("name", ["127.0.0.1", "localhost", "LOCALHOST", "[::1]"])
+    def test_local_host_headers_with_our_port_are_accepted(self, server, name):
+        assert request(server.port, "GET", "/", host=f"{name}:{server.port}")[0] == 200
 
     def test_cross_site_posts_are_refused(self, server):
         port = server.port
@@ -560,6 +575,32 @@ class TestHttp:
         ok = {"Origin": f"http://127.0.0.1:{port}"}
         assert request(port, "POST", "/restart", headers=ok)[0] == 204
 
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://localhost:1",
+            "http://localhost",
+            "http://127.0.0.1:{port}@evil.example",
+            "http://evil.example:{port}",
+            "http://127.0.0.1:{port}x",
+            "https://127.0.0.1:{port}",
+        ],
+    )
+    def test_posts_from_another_local_port_or_odd_origin_are_refused(self, server, origin):
+        headers = {"Origin": origin.format(port=server.port)}
+        assert request(server.port, "POST", "/restart", headers=headers)[0] == 403
+        assert request(server.port, "POST", "/event", b"{}", headers=headers)[0] == 403
+
+    @pytest.mark.parametrize("name", ["127.0.0.1", "localhost", "[::1]"])
+    def test_posts_from_our_own_page_are_accepted(self, server, name):
+        headers = {"Origin": f"http://{name}:{server.port}"}
+        assert request(server.port, "POST", "/restart", headers=headers)[0] == 204
+
+    def test_html_cannot_be_framed(self, server):
+        _, headers, _ = request(server.port, "GET", "/")
+        assert headers["X-Frame-Options"] == "DENY"
+        assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+
     def test_unknown_routes_and_methods(self, server):
         port = server.port
         assert request(port, "POST", "/nope")[0] == 404
@@ -568,7 +609,9 @@ class TestHttp:
         assert request(port, "PUT", "/")[0] == 501
 
     def test_no_cors_headers(self, server):
-        _, headers, _ = request(server.port, "GET", "/", headers={"Origin": "http://localhost"})
+        _, headers, _ = request(
+            server.port, "GET", "/", headers={"Origin": f"http://localhost:{server.port}"}
+        )
         assert not any(name.lower().startswith("access-control") for name in headers)
 
     def test_only_listens_on_loopback(self, server):
