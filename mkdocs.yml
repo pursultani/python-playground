@@ -99,6 +99,7 @@ nav:
   - Developer:
       - Architecture: developer/architecture.md
       - Plan: developer/plan.md
+      - CI and Pages: developer/ci.md
       - Specs:
           - Public API: developer/specs/api.md
           - Protocol: developer/specs/protocol.md
