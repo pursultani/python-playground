@@ -1,0 +1,48 @@
+[project]
+name = "python-playground"
+version = "0.1.0"
+description = "A tiny browser-based 2D graphics playground for teaching children to program in Python."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+    "griffe>=1.5",
+]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+]
+e2e = [
+    "playwright>=1.48",
+    "pytest-playwright>=0.5",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["engine/lib"]
+testpaths = ["engine/tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "e2e: drives a real browser (needs `make install-browsers`); run with `make e2e`",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["examples", "syllabus", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pyright]
+include = ["engine"]
+pythonVersion = "3.10"
+stubPath = "engine/typings"
+extraPaths = ["engine/lib"]
