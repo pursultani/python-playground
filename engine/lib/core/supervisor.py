@@ -38,6 +38,7 @@ KEEPALIVE_SECONDS = 15.0
 KILL_GRACE_SECONDS = 1.0
 MAX_BODY_BYTES = 64 * 1024
 MAX_CLIENT_BACKLOG = 5000
+SSE_RETRY = b"retry: 500\n\n"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 CONTENT_TYPES = {
@@ -614,6 +615,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
+            self.wfile.write(SSE_RETRY)
+            self.wfile.flush()
             while not client.closed:
                 try:
                     data = client.queue.get(timeout=0.5)

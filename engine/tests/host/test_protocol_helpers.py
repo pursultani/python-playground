@@ -92,6 +92,23 @@ class TestSceneMirror:
         mirror.apply({"t": "print", "text": "", "stream": "stdout"})
         assert mirror.snapshot()["console"] == []
 
+    def test_console_is_capped_in_characters_too(self):
+        mirror = proto.SceneMirror()
+        for index in range(50):
+            mirror.apply({"t": "print", "text": f"{index:02d}" + "x" * 99_998, "stream": "stdout"})
+        console = mirror.snapshot()["console"]
+        total = sum(len(chunk["text"]) for chunk in console)
+        assert total == proto.MAX_CONSOLE_CHARS
+        assert console[-1]["text"].startswith("49")
+        assert mirror.console_chars == total
+
+    def test_one_huge_print_is_trimmed_to_its_end(self):
+        mirror = proto.SceneMirror()
+        mirror.apply({"t": "print", "text": "a" * 500_000 + "THE END", "stream": "stdout"})
+        (chunk,) = mirror.snapshot()["console"]
+        assert len(chunk["text"]) == proto.MAX_CONSOLE_CHARS
+        assert chunk["text"].endswith("THE END")
+
     def test_console_is_capped_at_2000_chunks(self):
         mirror = proto.SceneMirror()
         for index in range(2500):

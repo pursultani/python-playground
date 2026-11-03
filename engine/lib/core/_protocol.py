@@ -37,9 +37,11 @@ CRASHED = "crashed"
 
 DEFAULT_BACKGROUND = "white"
 MAX_CONSOLE_CHUNKS = 2000
-# Adjacent chunks are merged, but a chunk never grows past this, so an endless `print` loop
-# cannot make the mirror grow without bound (2000 chunks x 8 KiB at most).
+# Adjacent chunks are merged, but a chunk never grows past this (it may be bigger if one print
+# was). The console also keeps at most MAX_CONSOLE_CHARS, so an endless `print` loop cannot make
+# the mirror, or a snapshot, grow without bound.
 MAX_CHUNK_CHARS = 8192
+MAX_CONSOLE_CHARS = 200_000
 MAX_KEY_LENGTH = 64
 
 
@@ -128,6 +130,7 @@ class SceneMirror:
         self.background = DEFAULT_BACKGROUND
         self.objects: dict[int, dict[str, Any]] = {}
         self.console: list[dict[str, str]] = []
+        self.console_chars = 0
         self.error: dict[str, Any] | None = None
 
     def reset(self, run: int) -> None:
@@ -137,6 +140,7 @@ class SceneMirror:
         self.background = DEFAULT_BACKGROUND
         self.objects = {}
         self.console = []
+        self.console_chars = 0
         self.error = None
 
     def apply(self, message: dict[str, Any]) -> None:
@@ -183,12 +187,22 @@ class SceneMirror:
             return
         stream = "stderr" if is_stderr else "stdout"
         last = self.console[-1] if self.console else None
+        self.console_chars += len(text)
         if last is not None and last["stream"] == stream and len(last["text"]) < MAX_CHUNK_CHARS:
             last["text"] += text
-            return
-        self.console.append({"text": text, "stream": stream})
-        if len(self.console) > MAX_CONSOLE_CHUNKS:
-            del self.console[: len(self.console) - MAX_CONSOLE_CHUNKS]
+        else:
+            self.console.append({"text": text, "stream": stream})
+        while self.console and (
+            len(self.console) > MAX_CONSOLE_CHUNKS or self.console_chars > MAX_CONSOLE_CHARS
+        ):
+            first = self.console[0]
+            excess = self.console_chars - MAX_CONSOLE_CHARS
+            if len(self.console) == 1 and excess > 0 and len(first["text"]) > excess:
+                first["text"] = first["text"][excess:]
+                self.console_chars -= excess
+                break
+            self.console_chars -= len(first["text"])
+            del self.console[0]
 
     def snapshot(self) -> dict[str, Any]:
         """Build the ``snapshot`` message describing the current state."""

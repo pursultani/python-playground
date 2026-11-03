@@ -82,6 +82,28 @@ def test_print_chunks_coalesce_per_stream_in_order(rt: Runtime, sent: Recorder) 
     ]
 
 
+def test_a_print_flood_is_capped_per_flush_and_says_so(rt: Runtime, sent: Recorder) -> None:
+    out = rt.print_stream("stdout")
+    for _ in range(100):
+        out.write("x" * 10_000 + "\n")
+    rt.flush()
+    printed = sent.of("print")
+    total = sum(len(m["text"]) for m in printed if m["stream"] == "stdout")
+    assert total <= runtime_module.MAX_PRINT_CHARS_PER_FLUSH
+    assert printed[-1]["stream"] == "stderr"
+    assert "wait(0.1)" in printed[-1]["text"]
+    sent.messages.clear()
+    out.write("calm\n")
+    rt.flush()
+    assert [(m["stream"], m["text"]) for m in sent.of("print")] == [("stdout", "calm\n")]
+
+
+def test_print_cap_notice_starts_on_its_own_line(rt: Runtime, sent: Recorder) -> None:
+    rt.print_stream("stdout").write("y" * (runtime_module.MAX_PRINT_CHARS_PER_FLUSH + 5))
+    rt.flush()
+    assert sent.of("print")[-1]["text"].startswith("\nToo much")
+
+
 def test_print_stream_behaves_like_a_file(rt: Runtime, sent: Recorder, monkeypatch) -> None:
     stream = rt.print_stream("stdout")
     assert stream.writable() and not stream.isatty() and not stream.closed
@@ -290,6 +312,24 @@ def test_handler_changes_are_flushed_during_dispatch(rt: Runtime, sent: Recorder
     rt.feed_event(key("a"))
     wait(0)
     assert sent.ops()[-1] == {"op": "update", "id": 1, "props": {"x": 50}}
+
+
+def test_a_loop_of_wait_calls_does_not_flood_the_browser(
+    rt: Runtime, sent: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_module, "MIN_WAIT_FLUSH_INTERVAL", 0.05)
+    ball = Circle()
+    started = time.monotonic()
+    steps = 0
+    while time.monotonic() - started < 0.3:
+        ball.x += 1
+        wait()
+        steps += 1
+    assert steps > 1000
+    assert len(sent.of("frame")) <= 8
+    rt.flush()
+    updates = [op for op in sent.ops() if op["op"] == "update"]
+    assert updates[-1]["props"]["x"] == steps
 
 
 def test_handler_errors_propagate_out_of_wait(rt: Runtime) -> None:

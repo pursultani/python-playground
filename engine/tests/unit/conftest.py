@@ -40,4 +40,5 @@ def rt(sent: Recorder, monkeypatch: pytest.MonkeyPatch) -> _runtime.Runtime:
     """An active runtime without a flusher thread, so tests control when messages go out."""
     runtime = _runtime.Runtime(sent)
     monkeypatch.setattr(_runtime, "_active", runtime)
+    monkeypatch.setattr(_runtime, "MIN_WAIT_FLUSH_INTERVAL", 0)
     return runtime

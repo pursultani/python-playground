@@ -239,6 +239,17 @@ class TestEventsStream:
         client.close()
         wait_until(lambda: supervisor.client_count == 0, timeout=5, what="client dropped")
 
+    def test_stream_starts_with_a_fast_reconnect_hint(self, make):
+        supervisor = make(LOOP)
+        supervisor.start()
+        client = SSEClient(supervisor.port)
+        try:
+            assert client.response.readline() == b"retry: 500\n"
+            assert client.response.readline() == b"\n"
+            assert client.next_message()["t"] == "snapshot"
+        finally:
+            client.close()
+
     def test_keep_alive_comments(self, make):
         supervisor = make(LOOP, keepalive_interval=0.3)
         supervisor.start()

@@ -117,7 +117,8 @@ Ops (inside `frame.ops`), ordered; at most one per object id per frame:
 
 ### Supervisor -> browser (Server-Sent Events on `GET /events`)
 
-Each SSE message is `data: <json>\n\n`. A `: keep-alive` comment every 15 s.
+The stream starts with `retry: 500` (fast reconnects). Each SSE message is `data: <json>\n\n`.
+A `: keep-alive` comment every 15 s.
 
 | `t` | Fields | Meaning |
 |---|---|---|
@@ -189,6 +190,16 @@ runtime maps ids to objects.
 - Exception chains (`__cause__`/`__context__`) are ignored: only the final exception is shown.
 - Errors raised while formatting must never crash the runner: fall back to
   `{"kind": ..., "message": ..., "frames": [], "context": []}`.
+
+## Flood protection (added during integration)
+
+- `wait()` flushes immediately but at most every 1/120 s; the 60 Hz flusher sends whatever a
+  skipped flush left behind. A tight `while True: obj.x += 1; wait()` therefore cannot overload
+  the supervisor.
+- At most 64 KB of printed text is sent per flush; the rest is dropped and a notice
+  ("Too much was printed too fast ... Try adding wait(0.1)") goes to `stderr`.
+- The supervisor's console mirror and the page's console are each capped at 200,000 characters
+  (in addition to the 2000-chunk cap).
 
 ## Threads and safety summary
 

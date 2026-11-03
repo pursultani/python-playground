@@ -15,7 +15,15 @@ from typing import Any
 from ._scene import Scene
 
 FLUSH_INTERVAL = 1 / 60
+# `wait()` flushes at once, but not more often than this, so `while True: wait()` cannot flood
+# the browser (the flusher thread sends whatever `wait()` skipped).
+MIN_WAIT_FLUSH_INTERVAL = FLUSH_INTERVAL / 2
 EVENT_QUEUE_SIZE = 1000
+MAX_PRINT_CHARS_PER_FLUSH = 64 * 1024
+TOO_MUCH_OUTPUT = (
+    "Too much was printed too fast, so some output was skipped. "
+    "Try adding wait(0.1) inside your loop.\n"
+)
 
 
 class Handler:
@@ -117,10 +125,13 @@ class Runtime:
         self._send = send
         self._lock = threading.Lock()
         self._flush_lock = threading.Lock()
+        self._last_flush = 0.0
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._events: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=EVENT_QUEUE_SIZE)
         self._prints: list[tuple[str, list[str]]] = []
+        self._print_chars = 0
+        self._print_skipped = False
         self.scene = Scene()
         self._background: str | None = None
         self._objects: dict[int, Any] = {}
@@ -170,10 +181,15 @@ class Runtime:
         if self._send is None:
             return
         with self._flush_lock:
+            self._last_flush = time.monotonic()
             with self._lock:
                 background, self._background = self._background, None
                 ops = self.scene.drain()
                 prints, self._prints = self._prints, []
+                if self._print_skipped:
+                    prints.append(("stderr", [self._skipped_notice(prints)]))
+                self._print_chars = 0
+                self._print_skipped = False
             if background is not None:
                 self._send({"t": "canvas", "background": background})
             if ops:
@@ -197,7 +213,7 @@ class Runtime:
     def wait(self, seconds: float = 0) -> None:
         """Flush, run queued event handlers, and pause until `seconds` have passed in total."""
         deadline = time.monotonic() + seconds
-        self.flush()
+        self._flush_unless_just_flushed()
         while True:
             self._dispatch_queued()
             remaining = deadline - time.monotonic()
@@ -208,8 +224,12 @@ class Runtime:
             except queue.Empty:
                 continue
             self._dispatch(event)
+            self._flush_unless_just_flushed()
+        self._flush_unless_just_flushed()
+
+    def _flush_unless_just_flushed(self) -> None:
+        if time.monotonic() - self._last_flush >= MIN_WAIT_FLUSH_INTERVAL:
             self.flush()
-        self.flush()
 
     def register(self, obj: Any, type_: str, props: dict[str, Any]) -> int:
         """Give a new object the next id and queue its `create` op."""
@@ -263,8 +283,22 @@ class Runtime:
         """Set (or clear) the key press handler."""
         self._key = handler
 
+    @staticmethod
+    def _skipped_notice(prints: list[tuple[str, list[str]]]) -> str:
+        last = prints[-1] if prints else None
+        if last is not None and not last[1][-1].endswith("\n"):
+            return "\n" + TOO_MUCH_OUTPUT
+        return TOO_MUCH_OUTPUT
+
     def _add_print(self, stream: str, text: str) -> None:
         with self._lock:
+            room = MAX_PRINT_CHARS_PER_FLUSH - self._print_chars
+            if len(text) > room:
+                self._print_skipped = True
+                text = text[: max(room, 0)]
+                if not text:
+                    return
+            self._print_chars += len(text)
             if self._prints and self._prints[-1][0] == stream:
                 self._prints[-1][1].append(text)
             else:
@@ -287,7 +321,7 @@ class Runtime:
             self._dispatch(event)
             dispatched = True
         if dispatched:
-            self.flush()
+            self._flush_unless_just_flushed()
 
     def _dispatch(self, event: dict[str, Any]) -> None:
         kind = event.get("t")
