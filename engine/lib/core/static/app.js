@@ -7,6 +7,10 @@
   const MAX_CONSOLE_CHUNKS = 2000;
   const MAX_CONSOLE_CHARS = 200000;
   const MAX_CALLERS = 4;
+  const MAX_GUIDE_LINES = 2000;
+  const MIN_GUIDE_STEP = (2 * HALF_W) / MAX_GUIDE_LINES;
+  const MIN_LABEL_GAP = 34;
+  const STALE_GRACE_MS = 300;
   const STATUS_LABELS = {
     starting: "Starting…",
     running: "Running…",
@@ -21,6 +25,8 @@
     state: "starting",
     nodes: new Map(),
     staleIds: null,
+    staleTimer: 0,
+    maxId: -1,
     backgroundStale: false,
     connected: false,
   };
@@ -234,10 +240,16 @@
       },
       apply(node) {
         const p = node.props;
-        const step = Math.max(2, num(p.size, 50));
+        const step = Math.max(MIN_GUIDE_STEP, num(p.size, 50));
         let d = "";
-        for (let x = step; x <= HALF_W; x += step) d += `M${fmt(x)} ${-HALF_H}V${HALF_H}M${fmt(-x)} ${-HALF_H}V${HALF_H}`;
-        for (let y = step; y <= HALF_H; y += step) d += `M${-HALF_W} ${fmt(y)}H${HALF_W}M${-HALF_W} ${fmt(-y)}H${HALF_W}`;
+        for (let k = 1; k * step <= HALF_W; k++) {
+          const x = k * step;
+          d += `M${fmt(x)} ${-HALF_H}V${HALF_H}M${fmt(-x)} ${-HALF_H}V${HALF_H}`;
+        }
+        for (let k = 1; k * step <= HALF_H; k++) {
+          const y = k * step;
+          d += `M${-HALF_W} ${fmt(y)}H${HALF_W}M${-HALF_W} ${fmt(-y)}H${HALF_W}`;
+        }
         d += `M0 ${-HALF_H}V${HALF_H}M${-HALF_W} 0H${HALF_W}`;
         const { dash, cap } = dashFor(p.style);
         node.body.setAttribute("d", d);
@@ -257,7 +269,7 @@
       },
       apply(node) {
         const p = node.props;
-        const size = Math.max(2, num(p.size, 50));
+        const size = Math.max(MIN_GUIDE_STEP, num(p.size, 50));
         const width = num(p.width, 3);
         const { dash, cap } = dashFor(p.style);
         node.lines.setAttribute("d", `M${-HALF_W} 0H${HALF_W}M0 ${-HALF_H}V${HALF_H}`);
@@ -275,7 +287,7 @@
         node.geomKey = key;
         let ticks = "";
         const texts = [];
-        const every = Math.ceil(34 / size);
+        const every = Math.ceil(MIN_LABEL_GAP / size);
         const off = 11 + width / 2;
         const add = (text, x, y, anchor) => {
           const t = svg("text", { x: fmt(x), y: fmt(y), "text-anchor": anchor, "dominant-baseline": "central", "font-size": 12 });
@@ -367,19 +379,47 @@
     }
   }
 
+  function resetStaleBackground() {
+    if (!app.backgroundStale) return;
+    app.backgroundStale = false;
+    setBackground("white", false);
+  }
+
+  function cancelStaleTimer() {
+    clearTimeout(app.staleTimer);
+    app.staleTimer = 0;
+  }
+
+  // Everything the previous run drew and this run did not (yet) draw goes away: at the end of the
+  // run, on an error, or when the grace period after the run's first frame is over.
   function sweepStale() {
-    if (app.backgroundStale) {
-      app.backgroundStale = false;
-      setBackground("white", false);
-    }
+    cancelStaleTimer();
+    resetStaleBackground();
     if (!app.staleIds) return;
     for (const id of [...app.staleIds]) removeNode(id);
     app.staleIds = null;
     restack();
   }
 
+  // Ids are handed out in creation order, so a stale id below the highest id this run has used
+  // will never be created again. Higher stale ids may still be coming (setup is not finished),
+  // so they stay for a short grace period instead of vanishing and reappearing.
+  function sweepSuperseded() {
+    resetStaleBackground();
+    if (!app.staleIds) return;
+    for (const id of [...app.staleIds]) if (id < app.maxId) removeNode(id);
+    if (!app.staleIds.size) {
+      app.staleIds = null;
+      cancelStaleTimer();
+    } else if (!app.staleTimer) {
+      app.staleTimer = setTimeout(sweepStale, STALE_GRACE_MS);
+    }
+    restack();
+  }
+
   function applyOps(ops) {
     for (const op of ops || []) {
+      if (app.staleIds && typeof op.id === "number") app.maxId = Math.max(app.maxId, op.id);
       if (op.op === "create") createNode(op.id, op.type, op.props || {});
       else if (op.op === "update") updateNode(op.id, op.props || {});
       else if (op.op === "remove") removeNode(op.id);
@@ -574,6 +614,7 @@
   // A snapshot is the page catching up, not something happening: no fades, no dimming animation.
   function onSnapshot(s) {
     clearNodes();
+    cancelStaleTimer();
     app.staleIds = null;
     app.backgroundStale = false;
     setRun(s.run || 0);
@@ -592,7 +633,9 @@
 
   function onRun(msg) {
     setRun(msg.run);
+    cancelStaleTimer();
     app.staleIds = new Set(app.nodes.keys());
+    app.maxId = -1;
     app.backgroundStale = true;
     clearConsole();
     hideError();
@@ -612,7 +655,7 @@
     status: onStatus,
     frame(msg) {
       applyOps(msg.ops);
-      sweepStale();
+      sweepSuperseded();
     },
     canvas(msg) {
       const first = app.backgroundStale;
@@ -663,6 +706,10 @@
     if (app.state === "running" && app.connected) post("/event", event);
   }
 
+  // Keys typed here belong to the browser (scrolling the console, pressing a button), not the program.
+  const KEY_SAFE_ZONE =
+    "#console-panel, input, textarea, select, button, a[href], summary, [contenteditable]";
+
   function initInput() {
     const canvas = $("canvas");
     canvas.addEventListener("click", (e) => {
@@ -677,9 +724,7 @@
 
     window.addEventListener("keydown", (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
-      const tag = e.target instanceof Element ? e.target.tagName : "";
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (tag === "BUTTON" && (e.key === " " || e.key === "Enter")) return;
+      if (e.target instanceof Element && e.target.closest(KEY_SAFE_ZONE)) return;
       const key = e.key === " " ? "Space" : e.key;
       if (key === "Space" || key.startsWith("Arrow")) e.preventDefault();
       sendEvent({ t: "key", key });

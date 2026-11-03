@@ -84,6 +84,12 @@ origin is 0,0 of the group). Children geometry is centred on 0,0:
 | grid | `<path>` lines at multiples of `size` across the canvas, stroke/width/dash by style (`dashed` -> `8 6`, `dotted` -> `1 5` with round caps), plus opacity |
 | axis | two lines through the origin, ticks every `size` (length 8), and when `labels` numbers at ticks (skip 0 label or show a single `0`), font-size 12, offset from the axis; labels use logical values (y labels positive upward) |
 
+Guide sizes are drawn exactly as asked (`Grid(size=1)` has a line every unit). The only clamp is a
+safety limit: a step below 0.4 canvas units (more than 2000 lines/ticks per direction) is
+drawn as 0.4. Axis **tick marks** are never thinned. Axis **labels** are thinned so they cannot
+overlap: only every Nth tick gets a number (N chosen so labelled ticks are at least 34 px apart,
+so `Axis(size=10)` labels 40, 80, ...); each shown label is the true value of its tick.
+
 - `title` (not for text/guides): `<text>` at the shape's centre (midpoint for line) in the
   same group, `paint-order: stroke`, white 3px stroke halo, dark fill, pointer-events none,
   hidden when empty; font-size 16 unless trivially small.
@@ -100,9 +106,18 @@ origin is 0,0 of the group). Children geometry is centred on 0,0:
 - `create` for an id that exists: reuse the node when `type` matches (apply props with
   transitions, so shapes glide from old state to new), otherwise replace the element.
   Mark the id as fresh (delete from `staleIds`).
-- On the **first** `frame`, `error`, `end`/`status finished|crashed` after a `run`: apply it, then
-  remove every node still in `staleIds`, and set `staleIds = null`. (So re-running an unchanged
-  script causes no flicker, and objects the program no longer creates disappear promptly.)
+- Stale nodes are swept (removed, `staleIds = null`) on `error`, `end`, `status finished|crashed`
+  after a `run`. While frames are still arriving the sweep is gentler, because the host can flush
+  a frame in the middle of a long setup loop and old nodes not yet re-created would vanish and
+  pop back without a transition:
+  - after each `frame`, stale ids **lower than the highest id mentioned so far in this run** are
+    removed at once (ids are handed out in creation order, so they will never be created);
+  - stale ids above that stay for a grace period (300 ms) that starts at the first `frame` after
+    the `run` that leaves some stale nodes; when it ends, everything still stale is removed.
+  A setup that takes longer than the grace period and creates fewer objects than before may still
+  flicker once; that is a known, accepted limitation. Re-running an unchanged script causes no
+  flicker, and objects the program no longer creates disappear within ~300 ms.
+- The stale background is reset to white at the first `frame` (or boundary), as before.
 - `snapshot`: clear everything, rebuild without transitions.
 - Coordinate mapping for messages: ignore frames whose `run` is older (messages are ordered per
   SSE connection, so this only matters across reconnects; snapshot resolves it).
@@ -114,10 +129,14 @@ origin is 0,0 of the group). Children geometry is centred on 0,0:
   `y = round(-vy)`. `target` = `data-id` of the nearest ancestor `[data-id]` of `event.target`
   inside `#shapes`, else `null`. Ignore clicks outside the 800x600 canvas rectangle.
   `POST /event` `{"t":"click","x","y","target"}` with `fetch` (keepalive), fire and forget.
-- **Keys:** `keydown` on `window`, ignore when `ctrlKey/altKey/metaKey`, ignore when focus is in
-  an input/textarea/button that would use the key (Space/Enter on a focused button); send
-  `{"t":"key","key": e.key === " " ? "Space" : e.key}`. `preventDefault()` for arrows and Space
-  so the page doesn't scroll. Send `repeat` events too.
+- **Keys:** `keydown` on `window`, ignore when `ctrlKey/altKey/metaKey`. Ignore (do not forward, do
+  not `preventDefault`) when the event target is inside the console panel (the console body is
+  focusable so its keyboard scrolling works) or is an interactive control (input, textarea,
+  select, button, link, summary, contenteditable): those keys belong to the browser. Otherwise send
+  `{"t":"key","key": e.key === " " ? "Space" : e.key}` and `preventDefault()` for arrows and Space
+  so the page doesn't scroll. Send `repeat` events too. Clicking Restart/Clear/the console toggle
+  with the mouse blurs the button so later keys still reach the program; clicking the canvas moves
+  focus out of the console.
 - Events are only sent while state is `running`.
 - Cursor: `pointer` over shapes whose element has a click handler is **not** known to the
   browser; keep the default cursor.
@@ -133,7 +152,7 @@ origin is 0,0 of the group). Children geometry is centred on 0,0:
 ## Files
 
 `index.html` (structure + inline SVG skeleton, links `/static/style.css`, `/static/app.js`);
-`app.js` (~500 lines max, sections: connection, state, rendering, console, error panel, input);
+`app.js` (~800 lines max, one plain script, sections: connection, state, rendering, console, error panel, input);
 `style.css`. Browser tests in `engine/tests/browser/` use a **fake host** (a tiny stdlib HTTP/SSE
 server defined in that folder that serves `static/` and plays scripted messages) driven by
 Playwright, so WP-C is testable without WP-B.

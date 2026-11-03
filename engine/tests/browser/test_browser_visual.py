@@ -57,6 +57,18 @@ def test_every_shape(app: App) -> None:
     shot(app, "scene")
 
 
+def test_small_and_normal_guides(open_app: Callable[..., App]) -> None:
+    for name, guides in {
+        "grid_5": [create(1, "grid", size=5)],
+        "axis_10": [create(1, "axis", size=10)],
+        "guides_normal": [create(1, "grid", size=50), create(2, "axis", size=100)],
+    }.items():
+        app = open_app()
+        app.send(frame(*guides))
+        app.sync()
+        shot(app, name)
+
+
 def test_error_panel(app: App) -> None:
     app.send(
         frame(*SCENE),

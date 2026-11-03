@@ -50,8 +50,8 @@ def test_edit_triggers_a_new_run_and_reuses_unchanged_nodes(pg: Playground):
     assert pg.console() == "v2\n"
     assert pg.is_same_node(1, "a"), "node 1 must be reused, not recreated"
     assert pg.is_same_node(2, "b")
-    assert pg.ids() == [1, 2], "the object the program no longer creates disappears"
     expect(pg.shape(3)).to_have_count(0)
+    assert pg.ids() == [1, 2], "the object the program no longer creates disappears"
     removed = pg.page.evaluate("window.__removed")
     assert removed == ["3"], f"only the stale node may be removed, got {removed}"
     assert pg.shape(1).locator("circle").get_attribute("fill") == "seagreen"

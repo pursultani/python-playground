@@ -127,15 +127,68 @@ def test_snapshot_cancels_a_pending_background_reset(app: App) -> None:
     assert background(app) == "#102030"
 
 
-def test_rerun_reuses_nodes_and_sweeps_stale_ones_on_first_frame(app: App) -> None:
+def wait_for_ids(app: App, ids: list[int]) -> None:
+    app.page.wait_for_function(
+        "ids => [...window.__playground.nodes.keys()].sort((a, b) => a - b).join() === ids.join()",
+        arg=ids,
+        timeout=3000,
+    )
+
+
+def test_rerun_reuses_nodes_and_sweeps_stale_ones_after_a_short_grace_period(app: App) -> None:
     two_shapes(app)
     tag(app, 1)
     app.send(run(2), status("starting", 2), status("running", 2))
     app.send(frame(create(1, "circle", x=50, y=0, radius=30)))
     app.sync()
-    assert app.ids() == [1]
+    assert app.ids() == [1, 2]
+    wait_for_ids(app, [1])
     assert is_tagged(app, 1)
     assert app.shape(1).evaluate("e => e.style.transform").startswith("translate(50px")
+
+
+def make_shapes(app: App, count: int) -> None:
+    app.send(frame(*[create(i, "circle", x=i, y=0) for i in range(1, count + 1)]))
+    expect(app.shapes()).to_have_count(count)
+
+
+def test_frame_in_the_middle_of_setup_does_not_remove_nodes_still_to_be_created(app: App) -> None:
+    make_shapes(app, 6)
+    tag(app, 5)
+    app.send(run(2), status("running", 2))
+    app.send(frame(*[create(i, "circle", x=i, y=1) for i in (1, 2, 3)]))
+    app.sync()
+    assert app.ids() == [1, 2, 3, 4, 5, 6]
+    app.send(frame(*[create(i, "circle", x=i, y=1) for i in (4, 5, 6)]))
+    app.sync()
+    assert app.ids() == [1, 2, 3, 4, 5, 6]
+    assert is_tagged(app, 5)
+    app.page.wait_for_timeout(500)
+    assert app.ids() == [1, 2, 3, 4, 5, 6]
+
+
+def test_stale_ids_below_the_newest_id_go_immediately(app: App) -> None:
+    make_shapes(app, 6)
+    app.send(run(2), frame(create(1, "circle"), create(4, "circle")))
+    app.sync()
+    assert app.ids() == [1, 4, 5, 6]
+
+
+def test_leftover_stale_nodes_go_after_the_grace_period_even_without_more_frames(app: App) -> None:
+    make_shapes(app, 6)
+    app.send(run(2), frame(create(1, "circle"), create(2, "circle")))
+    app.sync()
+    assert app.ids() == [1, 2, 3, 4, 5, 6]
+    wait_for_ids(app, [1, 2])
+
+
+def test_new_run_cancels_the_pending_sweep_of_the_old_one(app: App) -> None:
+    make_shapes(app, 4)
+    app.send(run(2), frame(create(1, "circle")))
+    app.sync()
+    app.send(run(3))
+    app.page.wait_for_timeout(450)
+    assert app.ids() == [1, 2, 3, 4]
 
 
 def test_create_with_different_type_replaces_the_element(app: App) -> None:

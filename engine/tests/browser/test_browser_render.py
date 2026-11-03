@@ -171,6 +171,55 @@ def test_axis_ticks_and_labels(app: App) -> None:
     assert d.count("V4") == 8
 
 
+def test_grid_draws_the_size_it_was_asked_for(app: App) -> None:
+    app.send(
+        frame(create(1, "grid", size=1), create(2, "grid", size=5), create(3, "grid", size=25))
+    )
+    app.sync()
+    counts = [(app.shape(i).locator("path").get_attribute("d") or "").count("V") for i in (1, 2, 3)]
+    assert counts == [801, 161, 33]
+    d = app.shape(2).locator("path").get_attribute("d") or ""
+    assert "M5 -300V300" in d
+    assert "M-5 -300V300" in d
+    assert "M-400 5H400" in d
+
+
+def test_grid_and_axis_are_capped_for_tiny_or_silly_sizes(app: App) -> None:
+    app.send(
+        frame(
+            create(1, "grid", size=0.0001),
+            create(2, "axis", size=0.0001, labels=True),
+            create(3, "grid", size=0),
+        )
+    )
+    app.sync()
+    grid = app.shape(1).locator("path").get_attribute("d") or ""
+    assert grid.count("V") == 2000 + 1
+    assert grid.count("H") == 1500 + 1
+    ticks = app.shape(2).locator("path").nth(1).get_attribute("d") or ""
+    assert ticks.count("V4") <= 2000
+    assert ticks.count("H4") <= 1500
+    assert app.shape(2).locator("g text").count() <= 100
+    assert app.ids() == [1, 2, 3]
+
+
+def test_axis_with_close_ticks_keeps_every_tick_but_skips_overlapping_labels(app: App) -> None:
+    app.send(frame(create(1, "axis", size=10, labels=True)))
+    app.sync()
+    ticks = app.shape(1).locator("path").nth(1).get_attribute("d") or ""
+    assert ticks.count("V4") == 80
+    assert ticks.count("H4") == 60
+    xs = app.shape(1).evaluate(
+        """e => [...e.querySelectorAll('g text')]
+            .filter(t => t.getAttribute('text-anchor') === 'middle')
+            .map(t => Number(t.getAttribute('x')))
+            .sort((a, b) => a - b)"""
+    )
+    assert len(xs) > 0
+    assert all(b - a >= 28 for a, b in zip(xs, xs[1:], strict=False))
+    assert all(x % 10 == 0 for x in xs)
+
+
 def test_guides_are_behind_shapes_and_ignore_clicks(app: App) -> None:
     app.send(frame(create(1, "circle", x=0, y=0), create(2, "grid"), create(3, "axis")))
     expect(app.page.locator("#guides > g")).to_have_count(2)

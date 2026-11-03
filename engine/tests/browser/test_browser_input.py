@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from page_driver import App, create, frame, status
+from page_driver import App, create, frame, print_, status
 
 
 def wait_events(app: App, count: int) -> list[dict[str, Any]]:
@@ -133,6 +133,69 @@ def test_space_on_a_focused_button_is_left_alone(app: App) -> None:
     app.page.keyboard.press("Space")
     settle(app)
     assert app.host.events == []
+
+
+def fill_console(app: App, lines: int = 200) -> None:
+    app.send(print_("".join(f"line {i}\n" for i in range(lines))))
+    app.sync()
+
+
+def test_keys_in_the_console_scroll_it_and_are_not_sent_to_the_program(app: App) -> None:
+    fill_console(app)
+    app.page.locator("#console").evaluate("e => { e.scrollTop = 0; }")
+    app.page.focus("#console")
+    prevented = app.page.evaluate(
+        """() => ["ArrowDown", " ", "ArrowUp"].map((key) => {
+            const e = new KeyboardEvent("keydown", { key, cancelable: true, bubbles: true });
+            document.getElementById("console").dispatchEvent(e);
+            return e.defaultPrevented;
+        })"""
+    )
+    assert prevented == [False, False, False]
+    app.page.keyboard.press("ArrowDown")
+    app.page.keyboard.press("PageDown")
+    app.page.keyboard.press("Space")
+    app.page.wait_for_function("document.getElementById('console').scrollTop > 0")
+    settle(app)
+    assert app.host.events == []
+
+
+def test_clicking_the_console_then_the_canvas_gives_keys_back_to_the_program(app: App) -> None:
+    fill_console(app, 5)
+    app.page.click("#console")
+    app.page.keyboard.press("a")
+    settle(app)
+    assert app.host.events == []
+    app.page.mouse.click(*canvas_point(app, 0, 0))
+    app.page.keyboard.press("b")
+    keys = [e for e in wait_events(app, 2) if e["t"] == "key"]
+    assert keys == [{"t": "key", "key": "b"}]
+
+
+def test_arrows_on_a_focused_button_are_left_alone(app: App) -> None:
+    app.page.focus("#restart")
+    prevented = app.page.evaluate(
+        """() => {
+            const e = new KeyboardEvent("keydown", {
+                key: "ArrowLeft", cancelable: true, bubbles: true,
+            });
+            document.getElementById("restart").dispatchEvent(e);
+            return e.defaultPrevented;
+        }"""
+    )
+    assert prevented is False
+    app.page.keyboard.press("ArrowRight")
+    settle(app)
+    assert app.host.events == []
+
+
+def test_clicking_console_buttons_does_not_steal_later_keys(app: App) -> None:
+    app.page.click("#console-clear")
+    app.page.keyboard.press("ArrowUp")
+    app.page.click("#console-toggle")
+    app.page.keyboard.press("Space")
+    events = wait_events(app, 2)
+    assert [e["key"] for e in events] == ["ArrowUp", "Space"]
 
 
 def test_clicking_restart_does_not_steal_later_keys(app: App) -> None:
