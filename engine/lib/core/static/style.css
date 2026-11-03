@@ -191,6 +191,8 @@ button { font: inherit; color: inherit; }
   transition: opacity 0.3s, filter 0.3s;
 }
 body.has-error #canvas-wrap { opacity: 0.45; filter: grayscale(0.6); }
+/* Nothing to show until the host has said something: no flash of an empty white canvas. */
+body:not([data-ready]) #canvas-wrap { visibility: hidden; }
 
 #canvas {
   display: block;
@@ -241,6 +243,7 @@ body.has-error #canvas-wrap { opacity: 0.45; filter: grayscale(0.6); }
   box-shadow: 0 18px 50px rgba(20, 20, 40, 0.28);
   animation: drop-in 0.22s ease-out;
 }
+#error-panel.no-anim { animation: none; }
 @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
 
 .err-title { display: flex; align-items: baseline; gap: 8px; color: var(--red); font-size: 15px; font-weight: 700; }

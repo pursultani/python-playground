@@ -59,10 +59,13 @@
     e.style.setProperty(prop, color);
   }
 
-  // Run `fn` with transitions off, restoring them on the next animation frame.
+  // Run `fn` with transitions off, restoring them on the next animation frame. The style flush
+  // matters: without it the class would come off before the browser ever saw the change, and the
+  // change would animate anyway.
   function withoutAnimation(e, fn) {
     e.classList.add("no-anim");
     fn();
+    void getComputedStyle(e).transitionDuration;
     requestAnimationFrame(() => e.classList.remove("no-anim"));
   }
 
@@ -77,12 +80,16 @@
 
   // ---------- status, banner, script name ----------
 
-  function setState(state) {
+  function setState(state, instant) {
     app.state = state;
     document.body.dataset.state = state;
     const badge = $("status");
-    badge.dataset.state = state;
-    badge.querySelector(".label").textContent = STATUS_LABELS[state] || state;
+    const apply = () => {
+      badge.dataset.state = state;
+      badge.querySelector(".label").textContent = STATUS_LABELS[state] || state;
+    };
+    if (instant) withoutAnimation(badge, apply);
+    else apply();
   }
 
   function setRun(run) {
@@ -496,8 +503,9 @@
     return row;
   }
 
-  function renderError(err) {
+  function renderError(err, instant) {
     const panel = $("error-panel");
+    panel.classList.toggle("no-anim", Boolean(instant));
     const frames = Array.isArray(err.frames) ? err.frames : [];
     const last = frames.length ? frames[frames.length - 1] : null;
     const kids = [];
@@ -558,19 +566,22 @@
 
   // ---------- messages from the host ----------
 
+  // A snapshot is the page catching up, not something happening: no fades, no dimming animation.
   function onSnapshot(s) {
     clearNodes();
     app.staleIds = null;
     setRun(s.run || 0);
-    setState(s.state || "starting");
+    setState(s.state || "starting", true);
     setScript(s.script);
     setBackground(s.background || "white", false);
     for (const o of s.objects || []) createNode(o.id, o.type, o.props || {});
     restack();
     clearConsole();
     for (const c of s.console || []) addConsole(c.text, c.stream);
-    if (s.error) renderError(s.error);
-    else hideError();
+    withoutAnimation($("canvas-wrap"), () => {
+      if (s.error) renderError(s.error, true);
+      else hideError();
+    });
   }
 
   function onRun(msg) {
@@ -614,7 +625,9 @@
 
   function onMessage(msg) {
     const handler = msg && HANDLERS[msg.t];
-    if (handler) handler(msg);
+    if (!handler) return;
+    handler(msg);
+    document.body.dataset.ready = "true";
   }
 
   // ---------- connection ----------
