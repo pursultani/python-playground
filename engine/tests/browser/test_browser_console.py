@@ -207,3 +207,15 @@ def test_error_panel_is_hidden_after_snapshot_without_error(open_app: Callable[.
     expect(app.page.locator("#error-panel")).to_be_visible()
     app.send({**app.host.snapshot, "error": None})
     expect(app.page.locator("#error-panel")).to_be_hidden()
+
+
+def test_console_is_capped_in_characters(app: App) -> None:
+    app.send(print_("a" * 150_000 + "\n"), print_("b" * 150_000 + "\n"), print_("the end\n"))
+    app.sync()
+    text = app.console_text()
+    assert len(text) <= 200_000 + 5
+    assert text.endswith("the end\n")
+    app.send(print_("c" * 300_000))
+    app.sync()
+    assert len(app.console_text()) <= 200_000 + 5
+    assert app.console_text().endswith("c")

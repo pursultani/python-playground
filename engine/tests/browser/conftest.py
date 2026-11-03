@@ -6,29 +6,13 @@ from typing import Any
 import pytest
 from fake_host import FakeHost
 from page_driver import App
-from playwright.sync_api import Browser, Playwright, sync_playwright
+from playwright.sync_api import Browser
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         if "tests/browser" in item.nodeid.replace("\\", "/"):
             item.add_marker(pytest.mark.e2e)
-
-
-@pytest.fixture(scope="session")
-def _playwright() -> Iterator[Playwright]:
-    with sync_playwright() as p:
-        yield p
-
-
-@pytest.fixture(scope="session")
-def chromium(_playwright: Playwright) -> Iterator[Browser]:
-    try:
-        browser = _playwright.chromium.launch()
-    except Exception as exc:  # browser binaries missing
-        pytest.skip(f"Chromium is not available (make install-browsers): {exc}")
-    yield browser
-    browser.close()
 
 
 @pytest.fixture

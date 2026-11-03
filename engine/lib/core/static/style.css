@@ -210,6 +210,8 @@ body.has-error #canvas-wrap { opacity: 0.45; filter: grayscale(0.6); }
 .no-anim, .no-anim > * { transition: none !important; }
 
 .shape text, .guide text { font-family: var(--sans), var(--emoji); }
+/* Axis numbers get a halo in the canvas colour so grid lines do not strike through them. */
+.guide text { stroke: var(--canvas-bg, white); stroke-width: 3px; paint-order: stroke; stroke-linejoin: round; }
 .shape text.content { white-space: pre; }
 .shape text.title {
   fill: #1d2433;

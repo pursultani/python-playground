@@ -140,6 +140,17 @@ def test_grid_lines_and_styles(app: App) -> None:
     expect(path).to_have_attribute("stroke-linecap", "round")
 
 
+def test_axis_numbers_have_a_halo_in_the_canvas_colour(app: App) -> None:
+    app.send(
+        {"t": "canvas", "background": "navy"},
+        frame(create(1, "axis", color="yellow", width=3, size=100, style="solid", labels=True)),
+    )
+    app.sync()
+    label = app.shape(1).locator("text").first
+    assert label.evaluate("e => getComputedStyle(e).stroke") == "rgb(0, 0, 128)"
+    assert label.evaluate("e => getComputedStyle(e).paintOrder") == "stroke"
+
+
 def test_axis_ticks_and_labels(app: App) -> None:
     app.send(frame(create(1, "axis", color="gray", width=3, size=100, style="solid", labels=True)))
     labels = app.shape(1).locator("g text")

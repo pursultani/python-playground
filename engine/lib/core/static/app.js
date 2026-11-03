@@ -5,6 +5,7 @@
   const HALF_W = 400;
   const HALF_H = 300;
   const MAX_CONSOLE_CHUNKS = 2000;
+  const MAX_CONSOLE_CHARS = 200000;
   const MAX_CALLERS = 4;
   const STATUS_LABELS = {
     starting: "Starting…",
@@ -375,6 +376,7 @@
 
   function setBackground(color, animate) {
     const bg = $("background");
+    $("canvas").style.setProperty("--canvas-bg", color);
     if (animate) paint(bg, "fill", color);
     else withoutAnimation(bg, () => paint(bg, "fill", color));
   }
@@ -382,7 +384,7 @@
   // ---------- console ----------
 
   const consoleEl = $("console");
-  const consoleStats = { lines: 0, partial: false };
+  const consoleStats = { lines: 0, chars: 0, partial: false };
   const countNewlines = (s) => s.split("\n").length - 1;
 
   function updateConsoleCount() {
@@ -404,21 +406,40 @@
       span.className = cls;
       span.textContent = text;
       consoleEl.appendChild(span);
-      while (consoleEl.childElementCount > MAX_CONSOLE_CHUNKS) {
-        const first = consoleEl.firstElementChild;
-        consoleStats.lines -= countNewlines(first.textContent);
-        first.remove();
-      }
     }
+    consoleStats.chars += text.length;
     consoleStats.lines += countNewlines(text);
+    trimConsole();
     consoleStats.partial = !text.endsWith("\n");
     updateConsoleCount();
     if (stick) consoleEl.scrollTop = consoleEl.scrollHeight;
   }
 
+  // Drop the oldest output once there are too many chunks or too many characters.
+  function trimConsole() {
+    while (
+      consoleEl.childElementCount > 1 &&
+      (consoleEl.childElementCount > MAX_CONSOLE_CHUNKS || consoleStats.chars > MAX_CONSOLE_CHARS)
+    ) {
+      const first = consoleEl.firstElementChild;
+      consoleStats.lines -= countNewlines(first.textContent);
+      consoleStats.chars -= first.textContent.length;
+      first.remove();
+    }
+    const only = consoleEl.firstElementChild;
+    if (only && consoleStats.chars > MAX_CONSOLE_CHARS) {
+      const cut = consoleStats.chars - MAX_CONSOLE_CHARS;
+      const dropped = only.textContent.slice(0, cut);
+      only.firstChild.deleteData(0, cut);
+      consoleStats.lines -= countNewlines(dropped);
+      consoleStats.chars -= cut;
+    }
+  }
+
   function clearConsole() {
     consoleEl.replaceChildren();
     consoleStats.lines = 0;
+    consoleStats.chars = 0;
     consoleStats.partial = false;
     updateConsoleCount();
   }
