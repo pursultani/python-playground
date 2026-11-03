@@ -83,6 +83,7 @@ class App:
     def open(self) -> App:
         self.page.goto(self.host.url)
         self.page.wait_for_selector("body[data-conn='ok']", timeout=TIMEOUT_MS)
+        self.sync()
         return self
 
     def send(self, *messages: dict[str, Any]) -> None:

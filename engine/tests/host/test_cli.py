@@ -245,10 +245,12 @@ class TestFullRun:
         port = run.port
         client = SSEClient(port)
         try:
-            messages = client.read_until(lambda m: m["t"] == "print")
+            # A slow client connects after the script printed: the line is then in the snapshot.
+            messages = client.read_until(lambda m: m["t"] == "print" or bool(m.get("console")))
         finally:
             client.close()
-        pid = int(messages[-1]["text"])
+        last = messages[-1]
+        pid = int(last["text"] if last["t"] == "print" else last["console"][-1]["text"])
         assert run.stop() == 0
         assert not pid_alive(pid)
         assert run.errors == []

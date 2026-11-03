@@ -176,6 +176,7 @@ def test_error_without_columns_highlights_the_line_only(app: App) -> None:
 def test_error_panel_limits_callers(app: App) -> None:
     many = [{"file": "main.py", "line": n, "function": f"f{n}", "code": "x()"} for n in range(1, 9)]
     app.send(error("RecursionError", "deep", frames=many, context=[]))
+    app.sync()
     items = app.page.locator(".err-callers li").all_text_contents()
     assert items[:4] == [f"main.py, line {n} in f{n}" for n in range(1, 5)]
     assert items[4] == "…"

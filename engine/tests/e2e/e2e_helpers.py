@@ -11,7 +11,12 @@ from typing import Any
 from core.supervisor import Supervisor
 from playwright.sync_api import Browser, BrowserContext, Locator, Page, ViewportSize, expect
 
-SHOTS = Path("/private/var/folders/mm/y6zzp5q160n30k0hz12tgp7m0000gn/T/opencode/pp-e2e")
+SHOTS = Path(
+    os.environ.get(
+        "PLAYGROUND_SHOTS",
+        "/private/var/folders/mm/y6zzp5q160n30k0hz12tgp7m0000gn/T/opencode/pp-e2e",
+    )
+)
 TIMEOUT_MS = 10_000
 
 
