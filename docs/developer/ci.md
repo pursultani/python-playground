@@ -28,8 +28,18 @@ mise exec -- glci run pages --context branch=main --secrets none --no-token
 `glci` copies uncommitted files, so a run includes work in progress. `.glciconfig.toml` skips
 GitLab's implicit `.pre` stage so local runs work. Nothing in the setup contacts GitLab.
 
+## GitHub Pages
+
+The docs are also published from GitHub by `.github/workflows/pages.yml`. On every push to
+`main` it runs the same `make ci-docs SITE_DIR=public` with
+`SITE_URL=https://pursultani.github.io/python-playground/`, then deploys with the official
+Pages actions. It only publishes docs; the lint and test jobs stay on GitLab.
+
+One-time setup: in the GitHub repository, set **Settings → Pages → Source** to **GitHub Actions**.
+If you move the repository or add a custom domain, update `SITE_URL` in the workflow.
+
 ## Maintenance
 
 - Bump the Playwright image tag whenever `playwright` changes in `uv.lock`.
-- `UV_VERSION` in the CI file tracks `mise.toml`.
+- `UV_VERSION` in the CI file and the `version` in the GitHub workflow track `mise.toml`.
 - The image has no `make`; jobs install it with `apt-get`.
